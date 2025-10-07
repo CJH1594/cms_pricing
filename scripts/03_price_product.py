@@ -18,7 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 
 from cms_pricing.src.market import bootstrap_if_needed, create_continuous_zero_curve
 from cms_pricing.src.models import make_lnP_spline, phi_g2pp_factory, calculate_V, load_calibrated_params
-from cms_pricing.src.pricing import price_digital_cms_spread
+from cms_pricing.src.pricing import price_digital_cms_spread, save_pricing_results
 
 
 def main() -> None:
@@ -41,8 +41,8 @@ def main() -> None:
         'tenor_long': 10.0,
         'tenor_short': 2.0,
         'strike': 0.0055,
-        'coupon': 0.07,
-        'notional': 100.0,
+        'coupon': 1.0,
+        'notional': 1.0,
     }
     print("상품 스펙:")
     print(f"  만기: {product['expiry']}년")
@@ -65,6 +65,16 @@ def main() -> None:
     print(f"  액면가 대비: {price / product['notional'] * 100:.2f}%")
     print(f"  지급 확률: {stats['payout_prob']:.2%}")
     print(f"  공정 쿠폰: {stats['fair_coupon']*100:.2f}%")
+
+    # 6. 가격 계산 결과 저장
+    pricing_results = {
+        'product': product,
+        'price': price,
+        'stats': stats,
+        'params': params,
+    }
+    save_pricing_results(pricing_results)
+
     # 통계 출력
     print("\n추가 통계:")
     for key in ['mean_D', 'df_T', 'p_T', 'discount_error_pct', 'spread_mean', 'spread_std']:

@@ -11,9 +11,44 @@
 
 from typing import Callable, Dict, Tuple
 import numpy as np
+from scipy.stats import norm
 
 from ..models.g2pp import calculate_forward_swap_rate
 from ..pricing.simulation import simulate_paths
+
+
+def _phi(x: float) -> float:
+    """표준 정규 분포의 확률 밀도 함수(PDF)를 계산합니다."""
+    return float(norm.pdf(x))
+
+def calculate_digital_bond_delta(S0: float, K: float, T0: float, sigma: float) -> float:
+    """디지털 채권의 델타 (Delt-B)를 계산합니다.
+    Ref: Theorem 4. Delt-B Formula
+    """
+    d1 = (np.log(S0 / K) + 0.5 * sigma**2 * T0) / (sigma * np.sqrt(T0))
+    delt_B = _phi(d1) / (K * sigma * np.sqrt(T0))
+    return float(delt_B)
+
+def calculate_digital_bond_price(S0: float, K: float, T0: float, sigma: float) -> float:
+    """블랙-숄즈 모델 기반의 디지털 채권 (현금 또는 무/유 상환) 가격을 계산합니다.
+    이 경우, S0는 기초자산 가격, K는 스트라이크, T0는 만기, sigma는 변동성, r은 무위험 이자율입니다.
+    """
+    if sigma < 1e-9 or T0 < 1e-9:
+        return 1.0 if S0 >= K else 0.0 # Degenerate case for zero volatility or zero time
+
+    d2 = (np.log(S0 / K) + (- 0.5 * sigma**2) * T0) / (sigma * np.sqrt(T0))
+    price = norm.cdf(d2)
+    return float(price)
+
+def calculate_spread_note_delta(S_prime_0: float, S0: float, K: float, T0: float, sigma: float) -> Tuple[float, float]:
+    """스프레드 노트의 델타 (Delta_N)를 계산합니다.
+    스프레드 (S_prime_0 - S0)를 기초 자산으로 하는 단일 디지털 채권의 델타를 기반으로 합니다.
+    Ref: Definition 4. Spread Note
+    """
+    spread_value = S_prime_0 - S0
+    # 여기서 sigma는 스프레드 자산의 변동성으로 가정합니다.
+    delta_component = calculate_digital_bond_delta(spread_value, K, T0, sigma)
+    return delta_component, -delta_component
 
 
 def price_digital_cms_spread(params: Dict[str, float],
