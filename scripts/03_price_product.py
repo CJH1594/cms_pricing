@@ -17,7 +17,7 @@ import numpy as np
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from cms_pricing.src.market import bootstrap_if_needed, create_continuous_zero_curve
-from cms_pricing.src.models import make_lnP_spline, phi_g2pp_factory, calculate_V, load_calibrated_params
+from cms_pricing.src.models import make_lnP_spline, phi_g2pp_factory, calculate_V, load_calibrated_params, calculate_forward_swap_rate
 from cms_pricing.src.pricing import price_digital_cms_spread, save_pricing_results
 
 
@@ -66,9 +66,42 @@ def main() -> None:
     print(f"  지급 확률: {stats['payout_prob']:.2%}")
     print(f"  공정 쿠폰: {stats['fair_coupon']*100:.2f}%")
 
-    # 6. 가격 계산 결과 저장
+    # 6. 스프레드 자산 가격 계산 (S_prime_0 - S0)
+    # 현재 시점 (t=0)의 x, y 값은 0으로 가정
+    x_0 = 0.0
+    y_0 = 0.0
+    
+    S_prime_0 = calculate_forward_swap_rate(
+        t_future=product['expiry'],
+        tenor=product['tenor_long'],
+        x_t=x_0,
+        y_t=y_0,
+        params=params,
+        P_market=P_market,
+        V_0_func=V_0_func
+    )
+    S0 = calculate_forward_swap_rate(
+        t_future=product['expiry'],
+        tenor=product['tenor_short'],
+        x_t=x_0,
+        y_t=y_0,
+        params=params,
+        P_market=P_market,
+        V_0_func=V_0_func
+    )
+    
+    spread_asset_price = S_prime_0 - S0
+    
+    # product에 스프레드 자산 가격과 가격 추가
+    product_with_spread = product.copy()
+    product_with_spread['spread_asset_price'] = spread_asset_price
+    product_with_spread['S_prime_0'] = S_prime_0
+    product_with_spread['S0'] = S0
+    product_with_spread['price'] = price
+
+    # 7. 가격 계산 결과 저장
     pricing_results = {
-        'product': product,
+        'product': product_with_spread,
         'price': price,
         'stats': stats,
         'params': params,

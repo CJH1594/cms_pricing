@@ -16,24 +16,25 @@ import sys
 import numpy as np
 from scipy.optimize import brentq
 
+# PYTHONPATH 설정
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 # Assuming cms_digital is in the parent directory of src/pricing
 # Adjust the import path as necessary based on your project structure
-from cms_pricing.src.market import create_continuous_zero_curve
 from cms_pricing.src.market import load_market_data # bootstrap_if_needed 대신 직접 로드
-from cms_pricing.src.models import phi_g2pp_factory, calculate_V, calculate_forward_swap_rate
 from cms_pricing.src.pricing.cms_digital import calculate_spread_note_delta, calculate_digital_bond_price
 from cms_pricing.src.pricing import load_pricing_results
 
-def _calculate_implied_volatility(
-    spread_note_value: float,
-    product: dict,
-    spread_asset_price: float,
-    K: float,
-    T0: float
-) -> float:
+def _calculate_implied_volatility(product: dict) -> float:
     """
     디지털 본드 가격을 이용해 내재 변동성 (Implied Volatility)을 역산합니다.
     """
+    # product에서 필요한 값들 추출
+    K = product['strike']
+    T0 = product['expiry']
+    spread_asset_price = product['spread_asset_price']
+    spread_note_value = product['price']
+    
     # 목표 디지털 본드 가격 계산
     # spread_note_value = notional * coupon * E[D_T * I(Spread > K)]
     # calculate_digital_bond_price는 만기 시 1단위 현금을 지급하는 디지털 옵션 가격
@@ -84,55 +85,22 @@ def _load_and_prepare_data():
         raise RuntimeError("가격 계산 결과 파일이 없습니다. 먼저 03_price_product.py를 실행하세요.") from e
 
     product = pricing_results['product']
-    spread_note_value = pricing_results['price']
-    params = pricing_results['params']
 
-    # 시장 데이터는 01_bootstrap_curve.py에서 미리 계산되어 저장되어야 함
-    try:
-        par_full, P_year = load_market_data()
-    except FileNotFoundError as e:
-        raise RuntimeError("시장 데이터 파일이 없습니다. 먼저 01_bootstrap_curve.py를 실행하세요.") from e
-    
-    zero_curve = create_continuous_zero_curve(P_year)
-    P_market = lambda t: np.exp(-zero_curve(t) * t)
-    V_0_func = lambda t: calculate_V(0.0, t, params)
-    phi_func, f0_func = phi_g2pp_factory(P_year, params['a'], params['b'], params['sigma'], params['eta'], params['rho'])
-
-    return product, spread_note_value, params, zero_curve, P_market, V_0_func, phi_func, f0_func
+    return product
 
 
 def _calculate_initial_greeks(
-    product: dict,
-    params: dict,
-    zero_curve, P_market, V_0_func,
-    spread_note_value: float
+    product: dict
 ):
     """
     초기 상태에서 델타 및 포트폴리오 가치를 계산합니다.
     """
+    # product에서 필요한 값들 추출
     T0 = product['expiry']
     K = product['strike']
-    x_0 = 0.0
-    y_0 = 0.0
-
-    S_prime_0 = calculate_forward_swap_rate(
-        t_future=T0,
-        tenor=product['tenor_long'],
-        x_t=x_0,
-        y_t=y_0,
-        params=params,
-        P_market=P_market,
-        V_0_func=V_0_func
-    )
-    S0 = calculate_forward_swap_rate(
-        t_future=T0,
-        tenor=product['tenor_short'],
-        x_t=x_0,
-        y_t=y_0,
-        params=params,
-        P_market=P_market,
-        V_0_func=V_0_func
-    )
+    S_prime_0 = product['S_prime_0']
+    S0 = product['S0']
+    spread_note_value = product['price']
 
     print("로드된 상품 스펙:")
     print(f"  만기 (T0): {T0}년")
@@ -141,15 +109,7 @@ def _calculate_initial_greeks(
     print(f"  Strike (K): {K*1e4:.0f} bp")
     print(f"  디지털 CMS 노트 가치: {spread_note_value:.2f}")
 
-    spread_asset_price = S_prime_0 - S0
-
-    sigma = _calculate_implied_volatility(
-        spread_note_value,
-        product,
-        spread_asset_price,
-        K,
-        T0
-    )
+    sigma = _calculate_implied_volatility(product)
     print(f"  내재 변동성 (Implied Sigma): {sigma:.4f}")
 
     delta_N = calculate_spread_note_delta(S_prime_0, S0, K, T0, sigma)
@@ -185,14 +145,12 @@ def _simulate_market_shock_and_rebalance(
 def main() -> None:
     print("스프레드 노트 델타 헤지 시뮬레이션")
 
-    product, spread_note_value, params, zero_curve, P_market, V_0_func, phi_func, f0_func = _load_and_prepare_data()
+    product = _load_and_prepare_data()
 
-    S_prime_0, S0, K, T0, sigma, delta_N, portfolio_value = _calculate_initial_greeks(
-        product, params, zero_curve, P_market, V_0_func, spread_note_value
-    )
+    S_prime_0, S0, K, T0, sigma, delta_N, portfolio_value = _calculate_initial_greeks(product)
 
     _simulate_market_shock_and_rebalance(
-        S_prime_0, S0, K, T0, sigma, delta_N, spread_note_value
+        S_prime_0, S0, K, T0, sigma, delta_N, product['price']
     )
 
 
