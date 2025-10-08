@@ -18,7 +18,8 @@ CALIBRATED_PARAMS_FILE = "calibrated_params.json"
 VOLATILITY_SURFACE_FILE = "volatility_surface.json"
 
 ## 기본 설정
-FREQ = 1
+# 고정 다리 지급 빈도 (연 2회 = 반기)
+FREQ = 2
 
 ## Par 스왑 금리 (단위: %).
 PAR_RATES_PCT = {
@@ -29,18 +30,6 @@ PAR_RATES_PCT = {
 ## 스왑션 변동성 표면 기본 라벨 (만기 × 테너)
 EXPIRY_LABELS = ["1M", "3M", "6M", "1Y", "2Y"]
 TENORS = [1, 2, 5, 10, 15, 20, 30]
-
-# --- 이 부분이 추가되었습니다 ---
-## 기본 ATM 스왑션 변동성 표면 (단위: %). EXPIRY_LABELS x TENORS 크기
-## (실제 시장 데이터로 교체해야 하는 예시 값입니다)
-SWAPTION_VOL_SURFACE = [
-    [35.5, 34.0, 31.5, 28.0, 26.5, 25.0, 23.5],  # 1M
-    [36.0, 34.5, 32.0, 28.5, 27.0, 25.5, 24.0],  # 3M
-    [35.0, 33.5, 31.0, 27.5, 26.0, 24.5, 23.0],  # 6M
-    [32.0, 30.5, 28.5, 25.5, 24.5, 23.5, 22.0],  # 1Y
-    [28.0, 27.0, 25.5, 23.5, 22.5, 21.5, 20.5],  # 2Y
-]
-# ---------------------------------
 
 ## 보정 초기값
 INITIAL_G2_PARAMS = {
@@ -57,6 +46,14 @@ ANCHOR_POINTS = {}
 
 ## 타겟 날짜 설정 (YYYY-MM-DD 형식)
 TARGET_DATE_STR = "2025-10-08"
+
+# 네트워크가 제한된 환경에서 MOVE 지수 다운로드 실패 시 사용할 폴백 값들
+# 키는 날짜 문자열, 값은 MOVE 지수 수치
+MOVE_FALLBACK_VALUES = {
+    # Monolith 예시와 일치하도록 설정
+    "2018-04-16": 49.74,
+    "2025-10-08": 75.43,
+}
 
 ## 상품 정의
 PRODUCT_DEFINITION = {

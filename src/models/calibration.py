@@ -1,335 +1,260 @@
-# -*- coding: utf-8 -*-
-"""
-G2++ 파라미터 보정 모듈
-=======================
-
-본 모듈은 시장의 ATM 스왑션 변동성 표면을 이용하여 G2++ 모델의 파라미터를
-최적화합니다. 불필요한 중복 계산을 줄이고 성능을 개선하기 위해 캐싱과 병렬
-계산을 적용합니다. 최적화 결과는 JSON 파일로 저장되며, 이후 실행에서는
-바로 로드하여 시간을 절약할 수 있습니다.
-"""
+# cms_pricing/src/models/calibration.py
 
 import json
-import os
+import time
 from functools import lru_cache
-from math import log, sqrt
-from typing import Dict, Iterable, List, Tuple
+from math import exp, log, sqrt
 
 import numpy as np
 from joblib import Parallel, delayed
+from scipy.interpolate import CubicSpline
 from scipy.optimize import minimize, root_scalar
 from scipy.stats import norm
-from numpy.polynomial.hermite import hermgauss
 
-# 패키지 표준 실행 방식에 맞는 절대 경로 임포트
-from cms_pricing.config.settings import (
-    DATA_DIR,
-    CALIBRATED_PARAMS_FILE,
-    SWAPTION_VOL_SURFACE,
-    EXPIRY_LABELS,
-    TENORS,
-    INITIAL_G2_PARAMS,
-)
+# 프로젝트 설정 파일에서 필요한 값들을 가져옵니다.
+from config import settings
 
-# --- Black 모델 스왑션 가격 계산 ---
+# --- 모듈 상수 ---
+SWAP_PAYMENT_FREQUENCY = 1.0 / settings.FREQ  # settings.py의 FREQ 사용
 
-def black_swaption_price(forward_swap_rate: float,
-                         strike: float,
-                         volatility: float,
-                         expiry: float,
-                         annuity: float,
-                         is_payer: bool = True) -> float:
-    """Black 모델을 이용한 스왑션 가격을 계산합니다.
+# =============================================================================
+# 섹션 1: 시장 데이터 변환 (Black 모델 기반)
+# =============================================================================
 
-    변동성이나 만기가 0 이하이면 0을 반환합니다.
-    """
-    if volatility <= 1e-9 or expiry <= 1e-9:
-        if is_payer:
-            return annuity * max(0.0, forward_swap_rate - strike)
-        else:
-            return annuity * max(0.0, strike - forward_swap_rate)
+def _calculate_forward_swap_rate(expiry: float, tenor: int, p_market_func: callable) -> tuple[float, float]:
+    """주어진 할인 곡선(P)으로부터 선도 스왑 금리와 연금을 계산합니다."""
+    payment_times = np.arange(expiry + SWAP_PAYMENT_FREQUENCY, expiry + tenor + 1e-8, SWAP_PAYMENT_FREQUENCY)
     
-    # 등가격 옵션에서 log(1)=0이 되는 것을 피하기 위해 작은 epsilon 추가
-    d1 = (log(forward_swap_rate / strike) + 0.5 * volatility ** 2 * expiry) / (volatility * sqrt(expiry))
+    if len(payment_times) == 0:
+        return 0.0, 0.0
+        
+    annuity = sum(SWAP_PAYMENT_FREQUENCY * p_market_func(t) for t in payment_times)
+    floating_pv = p_market_func(expiry) - p_market_func(expiry + tenor)
     
-    d2 = d1 - volatility * sqrt(expiry)
-    
-    if is_payer: # Payer 스왑션 (금리 상승에 베팅)
-        price = annuity * (forward_swap_rate * norm.cdf(d1) - strike * norm.cdf(d2))
-    else: # Receiver 스왑션 (금리 하락에 베팅)
-        price = annuity * (strike * norm.cdf(-d2) - forward_swap_rate * norm.cdf(-d1))
-    return price
-
-# --- 시장 데이터 처리 ---
-
-SWAP_PAYMENT_FREQUENCY = 0.5  # 고정금리 지급 주기 (반기)
-
-def calculate_forward_swap_rate_market(expiry: float,
-                                       tenor: float,
-                                       P_market: callable) -> Tuple[float, float]:
-    """t=0 시점의 시장 할인계수를 이용해 선도 스왑 금리와 애뉴어티(annuity)를 계산합니다."""
-    # 지급 시점 계산 (만기 이후부터)
-    payment_times = np.arange(expiry + SWAP_PAYMENT_FREQUENCY,
-                              expiry + tenor + 1e-9,  # 끝점을 포함하기 위해 epsilon 추가
-                              SWAP_PAYMENT_FREQUENCY)
-    
-    # 애뉴어티: 고정금리 1단위에 대한 현재가치 합
-    annuity = sum(SWAP_PAYMENT_FREQUENCY * P_market(ti) for ti in payment_times)
-    
-    # 변동금리 현재가치
-    floating_pv = P_market(expiry) - P_market(expiry + tenor)
-    
-    if annuity <= 1e-9:
+    if annuity < 1e-9:
         return 0.0, 0.0
         
     forward_rate = floating_pv / annuity
     return forward_rate, annuity
 
+def _black_swaption_price(forward_swap_rate: float, strike: float, volatility: float, expiry: float, annuity: float) -> float:
+    """Black-76 모델을 사용하여 스왑션 가격을 계산합니다."""
+    if volatility <= 1e-9 or expiry <= 1e-9:
+        return max(0.0, (forward_swap_rate - strike)) * annuity
+        
+    d1 = (log(forward_swap_rate / strike) + 0.5 * volatility**2 * expiry) / (volatility * sqrt(expiry))
+    d2 = d1 - volatility * sqrt(expiry)
+    
+    price = annuity * (forward_swap_rate * norm.cdf(d1) - strike * norm.cdf(d2))
+    return price
 
-def build_market_prices_from_vol_surface(surface_pct: Iterable[Iterable[float]],
-                                         expiry_labels: List[str],
-                                         tenors: List[int],
-                                         P_market: callable) -> Dict[Tuple[float, int], float]:
-    """변동성 표면과 할인 곡선을 사용하여 시장 스왑션 가격을 구축합니다.
-
-    Args:
-        surface_pct: % 단위의 ATM 변동성을 담은 2차원 배열.
-    """
-    label_to_year = {"1M": 1/12, "3M": 0.25, "6M": 0.5, "1Y": 1.0, "2Y": 2.0, "3Y": 3.0, "5Y": 5.0, "10Y": 10.0}
+def _build_market_prices_from_vol(p_market_func: callable, surface_pct: list, expiry_labels: list, tenors: list) -> dict:
+    """변동성 표면을 Black 모델을 이용해 시장 가격 표면으로 변환합니다."""
+    label_to_year = {label: to_years(label) for label in expiry_labels}
     expiries_years = [label_to_year[lbl] for lbl in expiry_labels]
     
-    market_prices: Dict[Tuple[float, int], float] = {}
-    
+    market_prices = {}
     for i, T in enumerate(expiries_years):
         for j, tenor in enumerate(tenors):
             atm_vol = surface_pct[i][j] / 100.0
-            forward_rate, annuity = calculate_forward_swap_rate_market(T, tenor, P_market)
+            forward_rate, annuity = _calculate_forward_swap_rate(T, tenor, p_market_func)
             
-            if forward_rate > 0.0 and annuity > 0.0:
-                # ATM 스왑션이므로 행사가(strike)는 선도 스왑 금리와 동일
-                price = black_swaption_price(forward_rate, forward_rate,
-                                             atm_vol, T, annuity, is_payer=True)
-                market_prices[(T, tenor)] = price
+            if forward_rate > 0 and annuity > 0:
+                market_price = _black_swaption_price(
+                    forward_swap_rate=forward_rate, strike=forward_rate, # ATM 옵션
+                    volatility=atm_vol, expiry=T, annuity=annuity
+                )
+                market_prices[(T, tenor)] = market_price
             else:
                 market_prices[(T, tenor)] = 0.0
-                
     return market_prices
 
-# --- 캐싱을 적용한 G2++ 모델 구성 요소 ---
+# =============================================================================
+# 섹션 2: G2++ 모델 가격 결정 함수
+# =============================================================================
 
 @lru_cache(maxsize=4096)
-def B_cached(z: float, t: float, T: float) -> float:
-    """캐싱된 G2++ 모델의 B(z, t, T) 함수."""
-    if abs(z) < 1e-9:
-        return T - t
-    return (1.0 - np.exp(-z * (T - t))) / z
-
+def _B(z, t, T):
+    """G2++ 모델의 B(t,T) 보조 함수"""
+    if abs(z) < 1e-9: return T - t
+    return (1 - exp(-z * (T - t))) / z
 
 @lru_cache(maxsize=4096)
-def calculate_V_cached(t: float, T: float, a: float, b: float,
-                       sigma: float, eta: float, rho: float) -> float:
-    """캐싱된 G2++ 모델의 V(t,T) 함수."""
+def _V(t, T, a, b, sigma, eta, rho):
+    """G2++ 모델의 V(t,T) 분산 함수"""
     T_m_t = T - t
-    if abs(a) < 1e-9 or abs(b) < 1e-9:
-        return 0.0
-        
-    # term1 calculation
-    if abs(a) < 1e-9:
-        term1 = (sigma**2 / 2) * T_m_t**2
-    else:
-        term1 = (sigma**2 / a**2) * (T_m_t + (2 / a) * np.exp(-a * T_m_t) - (1 / (2 * a)) * np.exp(-2 * a * T_m_t) - 3 / (2 * a))
-
-    # term2 calculation
-    if abs(b) < 1e-9:
-        term2 = (eta**2 / 2) * T_m_t**2
-    else:
-        term2 = (eta**2 / b**2) * (T_m_t + (2 / b) * np.exp(-b * T_m_t) - (1 / (2 * b)) * np.exp(-2 * b * T_m_t) - 3 / (2 * b))
-    
-    # term3 calculation
-    if abs(a) < 1e-9 and abs(b) < 1e-9:
-        term3 = rho * sigma * eta * T_m_t**2
-    elif abs(a) < 1e-9:
-        term3 = (2 * rho * sigma * eta / b) * (T_m_t + (np.exp(-b * T_m_t) - 1) / b - (np.exp(-b * T_m_t) - 1) / b)
-    elif abs(b) < 1e-9:
-        term3 = (2 * rho * sigma * eta / a) * (T_m_t + (np.exp(-a * T_m_t) - 1) / a - (np.exp(-a * T_m_t) - 1) / a)
-    else:
-        term3 = (2 * rho * sigma * eta / (a * b)) * (T_m_t + (np.exp(-a * T_m_t) - 1) / a + (np.exp(-b * T_m_t) - 1) / b - (np.exp(-(a + b) * T_m_t) - 1) / (a + b))
-
+    term1 = (sigma**2 / a**2) * (T_m_t + (2/a)*exp(-a*T_m_t) - (1/(2*a))*exp(-2*a*T_m_t) - 3/(2*a))
+    term2 = (eta**2 / b**2) * (T_m_t + (2/b)*exp(-b*T_m_t) - (1/(2*b))*exp(-2*b*T_m_t) - 3/(2*b))
+    term3 = (2*rho*sigma*eta/(a*b)) * (T_m_t + (exp(-a*T_m_t)-1)/a + (exp(-b*T_m_t)-1)/b - (exp(-(a+b)*T_m_t)-1)/(a+b))
     return term1 + term2 + term3
 
-
-def price_swaption_g2_analytic(params: Dict[str, float],
-                               swaption_details: Tuple[float, int, float, float],
-                               P_market: callable) -> float:
-    """가우스-에르미트 구적법을 이용한 G2++ 스왑션 분석적 해법."""
+def _price_swaption_g2_fast(params: dict, p_market_func: callable, expiry: float, tenor: int, strike: float) -> float:
+    """Gauss-Hermite 구적법을 사용한 고속 G2++ 스왑션 가격 결정"""
     a, b, sigma, eta, rho = params['a'], params['b'], params['sigma'], params['eta'], params['rho']
-    # 파라미터 유효성 검사, 유효하지 않으면 큰 페널티 값 반환
-    if any(p <= 0 for p in [a, b, sigma, eta]) or not (-1 <= rho <= 1):
-        return 1e10
-
-    expiry, tenor, strike, notional = swaption_details
     
-    try:
-        sigma_x = sigma * sqrt((1 - np.exp(-2 * a * expiry)) / (2 * a)) if a > 0 else 0.0
-        sigma_y = eta * sqrt((1 - np.exp(-2 * b * expiry)) / (2 * b)) if b > 0 else 0.0
-    except (OverflowError, ValueError):
-        return 1e10 # 수치적 불안정성에 대한 페널티
-        
-    if sigma_x <= 1e-9 or sigma_y <= 1e-9: return 1e10
+    # 파라미터 유효성 검사
+    if any(p <= 1e-9 for p in [a, b, sigma, eta]) or not (-1 < rho < 1): return 1e9
 
     try:
-        rho_xy = (rho * sigma * eta / (a + b)) * (1 - np.exp(-(a + b) * expiry)) / (sigma_x * sigma_y)
-    except (OverflowError, ZeroDivisionError):
-        return 1e10
+        sigma_x = sigma * sqrt((1 - exp(-2 * a * expiry)) / (2 * a))
+        sigma_y = eta * sqrt((1 - exp(-2 * b * expiry)) / (2 * b))
+        if sigma_x < 1e-9 or sigma_y < 1e-9: return 1e9
+        rho_xy = (rho * sigma * eta / (a + b)) * (1 - exp(-(a + b) * expiry)) / (sigma_x * sigma_y)
+    except (OverflowError, ValueError, ZeroDivisionError):
+        return 1e9
 
-    payment_times = np.arange(expiry + SWAP_PAYMENT_FREQUENCY, expiry + tenor + 1e-9, SWAP_PAYMENT_FREQUENCY)
-    
-    x_nodes, weights = hermgauss(20) # 가우스-에르미트 구적법에 20개 노드 사용
+    payment_times = np.arange(expiry + SWAP_PAYMENT_FREQUENCY, expiry + tenor + 1e-8, SWAP_PAYMENT_FREQUENCY)
+    x_nodes, weights = np.polynomial.hermite.hermgauss(20)
     x_scaled = sigma_x * sqrt(2) * x_nodes
     
     integral_sum = 0.0
-    
     for x, w in zip(x_scaled, weights):
         try:
-            # 스왑 가치가 1이 되는 y_bar를 찾는 방정식
-            def y_bar_equation(y: float) -> float:
-                swap_pv = 0.0
-                for t_i in payment_times:
-                    c_i = strike * SWAP_PAYMENT_FREQUENCY if t_i != payment_times[-1] else 1.0 + strike * SWAP_PAYMENT_FREQUENCY
-                    V_T_ti = calculate_V_cached(expiry, t_i, a, b, sigma, eta, rho)
-                    A_T_ti = (P_market(t_i) / P_market(expiry)) * np.exp(0.5 * (V_T_ti - calculate_V_cached(0, t_i, a, b, sigma, eta, rho) + calculate_V_cached(0, expiry, a, b, sigma, eta, rho)))
-                    P_T_ti = A_T_ti * np.exp(-B_cached(a, expiry, t_i) * x - B_cached(b, expiry, t_i) * y)
-                    swap_pv += c_i * P_T_ti
+            # y_bar(x)를 찾는 방정식
+            def y_bar_eq(y):
+                swap_pv = sum(
+                    ( (1 + strike * SWAP_PAYMENT_FREQUENCY) if t == payment_times[-1] else strike * SWAP_PAYMENT_FREQUENCY) *
+                    (p_market_func(t) / p_market_func(expiry)) *
+                    exp(0.5 * (_V(expiry, t, a, b, sigma, eta, rho) - _V(0, t, a, b, sigma, eta, rho) + _V(0, expiry, a, b, sigma, eta, rho))
+                        - _B(a, expiry, t) * x - _B(b, expiry, t) * y)
+                    for t in payment_times
+                )
                 return swap_pv - 1.0
-
-            y_bar = root_scalar(y_bar_equation, bracket=[-1.0, 1.0], method='brentq').root
             
-            h1 = y_bar / (sigma_y * sqrt(1 - rho_xy**2)) - (rho_xy * x) / (sigma_x * sqrt(1 - rho_xy**2))
+            y_bar = root_scalar(y_bar_eq, bracket=[-1.0, 1.0], method='brentq').root
             
-            payoff = norm.cdf(-h1)
-            sum_term = 0.0
-            for t_i in payment_times:
-                c_i = strike * SWAP_PAYMENT_FREQUENCY if t_i != payment_times[-1] else 1.0 + strike * SWAP_PAYMENT_FREQUENCY
-                V_T_ti = calculate_V_cached(expiry, t_i, a, b, sigma, eta, rho)
-                A_T_ti = (P_market(t_i) / P_market(expiry)) * np.exp(0.5 * (V_T_ti - calculate_V_cached(0, t_i, a, b, sigma, eta, rho) + calculate_V_cached(0, expiry, a, b, sigma, eta, rho)))
-                B_b = B_cached(b, expiry, t_i)
-                lambda_i = c_i * A_T_ti * np.exp(-B_cached(a, expiry, t_i) * x)
-                kappa_i = -B_b * ( (rho_xy * sigma_y * x) / sigma_x - 0.5 * (1 - rho_xy**2) * sigma_y**2 * B_b )
-                h2 = h1 + B_b * sigma_y * sqrt(1 - rho_xy**2)
-                sum_term += lambda_i * np.exp(kappa_i) * norm.cdf(-h2)
+            h1 = (y_bar / (sigma_y * sqrt(1 - rho_xy**2))) - (rho_xy * x) / (sigma_x * sqrt(1 - rho_xy**2))
+            payoff_sum_term = sum(
+                ((1 + strike * SWAP_PAYMENT_FREQUENCY) if t == payment_times[-1] else strike * SWAP_PAYMENT_FREQUENCY) *
+                (p_market_func(t) / p_market_func(expiry)) *
+                exp(0.5 * (_V(expiry, t, a, b, sigma, eta, rho) - _V(0, t, a, b, sigma, eta, rho) + _V(0, expiry, a, b, sigma, eta, rho))
+                    - _B(a, expiry, t) * x - _B(b, expiry, t) * ( -0.5 * (1 - rho_xy**2) * sigma_y**2 * _B(b, expiry, t) + (rho_xy * sigma_y * x) / sigma_x)) *
+                norm.cdf(-h1 - _B(b, expiry, t) * sigma_y * sqrt(1 - rho_xy**2))
+                for t in payment_times
+            )
+            integral_sum += w * (norm.cdf(-h1) - payoff_sum_term)
 
-            payoff -= sum_term
-            integral_sum += w * payoff
-        except Exception:
-            # 적분 중 발생하는 수치 오류는 무시하고 다음 노드로 진행
+        except (ValueError, OverflowError):
             continue
             
-    integral = integral_sum / sqrt(np.pi)
-    return notional * P_market(expiry) * integral
+    return p_market_func(expiry) * integral_sum / sqrt(np.pi)
 
-# --- 보정 목적 함수 ---
 
-def _compute_single_error(expiry: float, tenor: int, market_price: float,
-                          params: Dict[str, float], P_market: callable) -> float:
-    """단일 스왑션에 대한 제곱 오차를 계산합니다."""
-    forward_rate, _ = calculate_forward_swap_rate_market(expiry, tenor, P_market)
-    swaption_details = (expiry, tenor, forward_rate, 1.0) # 보정을 위해 액면가는 1로 고정
+# =============================================================================
+# 섹션 3: 병렬 보정 실행 함수
+# =============================================================================
+
+def _compute_single_error(details: tuple, params: dict, p_market_func: callable, market_prices: dict) -> float:
+    """단일 스왑션의 제곱 오차를 계산 (병렬 처리용)"""
+    expiry, tenor = details
+    market_price = market_prices[details]
+    forward_rate, _ = _calculate_forward_swap_rate(expiry, tenor, p_market_func)
     
-    model_price = price_swaption_g2_analytic(params, swaption_details, P_market)
+    model_price = _price_swaption_g2_fast(params, p_market_func, expiry, tenor, forward_rate)
     
-    error = model_price - market_price
-    return error * error
+    return (model_price - market_price)**2
 
-
-def total_error_function(params_array: np.ndarray,
-                         market_prices: Dict[Tuple[float, int], float],
-                         P_market: callable) -> float:
-    """모든 스왑션에 대한 제곱 오차의 합계를 반환합니다.
-
-    joblib을 사용하여 병렬 계산을 수행합니다.
-    """
-    params = dict(zip(['a', 'b', 'sigma', 'eta', 'rho'], params_array))
+def _total_error_function(param_array: np.ndarray, p_market_func: callable, market_prices: dict, iteration: list) -> float:
+    """최적화를 위한 전체 오차 함수 (병렬 처리)"""
+    params = {'a': param_array[0], 'b': param_array[1], 'sigma': param_array[2], 'eta': param_array[3], 'rho': param_array[4]}
+    iteration[0] += 1
     
+    # joblib을 사용한 병렬 계산
     errors = Parallel(n_jobs=-1, prefer="threads")(
-        delayed(_compute_single_error)(exp, ten, price, params, P_market)
-        for (exp, ten), price in market_prices.items()
+        delayed(_compute_single_error)(details, params, p_market_func, market_prices)
+        for details in market_prices.keys()
     )
     
-    return sum(errors)
-
-# --- 메인 보정 루틴 ---
-
-def calibrate_g2pp(P_market: callable,
-                   surface_pct: Iterable[Iterable[float]] = None,
-                   expiry_labels: List[str] = None,
-                   tenors: List[int] = None,
-                   initial_params: Dict[str, float] = None,
-                   save_results: bool = True,
-                   maxiter: int = 50) -> Dict[str, float]:
-    """ATM 스왑션 표면을 이용해 G2++ 파라미터를 보정합니다."""
-    # 인자가 제공되지 않으면 settings의 기본값 사용
-    surface_pct = surface_pct or SWAPTION_VOL_SURFACE
-    expiry_labels = expiry_labels or EXPIRY_LABELS
-    tenors = tenors or TENORS
-    initial_params = initial_params or INITIAL_G2_PARAMS
-
-    print("변동성 표면으로부터 시장 가격을 구축합니다...")
-    market_prices = build_market_prices_from_vol_surface(surface_pct, expiry_labels, tenors, P_market)
+    total_error = sum(errors)
     
-    x0 = np.array(list(initial_params.values()))
+    print(f"\r  Iter: {iteration[0]:3d} | Error: {total_error:.8f} | a={params['a']:.3f}, b={params['b']:.3f}, "
+          f"σ={params['sigma']:.4f}, η={params['eta']:.4f}, ρ={params['rho']:.3f}", end="")
 
-    print("최적화를 시작합니다... (수 분이 소요될 수 있습니다)")
+    return total_error
+
+# =============================================================================
+# 섹션 4: 공개 API 함수
+# =============================================================================
+
+def calibrate_g2pp(p_market_func: callable, surface_pct: list, expiry_labels: list, tenors: list,
+                   initial_params: dict = None) -> dict:
+    """
+    주어진 시장 데이터에 G2++ 모델 파라미터를 보정합니다.
+
+    Args:
+        p_market_func (callable): 할인 채권 가격 함수 P(t).
+        surface_pct (list): % 단위의 스왑션 변동성 표면.
+        expiry_labels (list): 만기 라벨 리스트 (예: ['1M', '1Y']).
+        tenors (list): 테너 리스트 (예: [1, 5, 10]).
+        initial_params (dict, optional): 최적화를 위한 초기 파라미터. Defaults to settings.
+
+    Returns:
+        dict: 보정된 파라미터 및 결과.
+    """
+    if initial_params is None:
+        initial_params = settings.INITIAL_G2_PARAMS
+
+    # 1. 변동성 표면을 시장 가격으로 변환
+    print("  - 시장 가격 계산 중...")
+    market_prices = _build_market_prices_from_vol(p_market_func, surface_pct, expiry_labels, tenors)
+    
+    # 2. 최적화 실행
+    print("  - G2++ 파라미터 최적화 시작...")
+    initial_array = np.array([initial_params[k] for k in ['a', 'b', 'sigma', 'eta', 'rho']])
+    iteration_counter = [0] # 가변 객체를 이용한 카운터
+
+    start_time = time.time()
     result = minimize(
-        total_error_function,
-        x0,
-        args=(market_prices, P_market),
+        fun=_total_error_function,
+        x0=initial_array,
+        args=(p_market_func, market_prices, iteration_counter),
         method='Nelder-Mead',
-        options={'maxiter': maxiter, 'adaptive': True, 'xatol': 1e-6, 'fatol': 1e-7}
+        options={'maxiter': 100, 'adaptive': True, 'xatol': 1e-6, 'fatol': 1e-8}
     )
-    print(f"최적화가 {result.nit}번의 반복 후 종료되었습니다.")
+    elapsed = time.time() - start_time
+    print("\n  - 최적화 완료.")
 
-    optimized_params_array = result.x
-    calibrated_params = {
-        'a': float(optimized_params_array[0]),
-        'b': float(optimized_params_array[1]),
-        'sigma': float(optimized_params_array[2]),
-        'eta': float(optimized_params_array[3]),
-        'rho': float(optimized_params_array[4]),
-        'final_error': float(result.fun),
-        'iterations': int(result.nit),
+    # 3. 결과 정리 및 반환
+    optimized_params = result.x
+    final_params = {
+        'a': optimized_params[0], 'b': optimized_params[1], 'sigma': optimized_params[2],
+        'eta': optimized_params[3], 'rho': optimized_params[4],
+        'final_error': result.fun,
+        'iterations': result.nit,
+        'elapsed_time_sec': elapsed,
         'status': result.message
     }
 
-    if save_results:
-        save_calibrated_params(calibrated_params)
-        print(f"보정된 파라미터가 {CALIBRATED_PARAMS_FILE} 파일에 저장되었습니다.")
-        
-    return calibrated_params
+    # 보정된 파라미터를 파일에 저장
+    save_calibrated_params(final_params)
+    
+    return final_params
 
-# --- 파라미터 파일 입출력 ---
+def save_calibrated_params(params: dict, filename: str = None):
+    """보정된 파라미터를 JSON 파일로 저장합니다."""
+    if filename is None:
+        filename = settings.CALIBRATED_PARAMS_FILE
+    
+    filepath = os.path.join(settings.DATA_DIR, filename)
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
+    
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(params, f, ensure_ascii=False, indent=4)
+    print(f"✓ 보정된 파라미터 저장 완료: {filepath}")
 
-def _get_params_filepath(filename: str = CALIBRATED_PARAMS_FILE) -> str:
-    """파라미터 파일의 절대 경로를 계산합니다."""
-    return os.path.join(DATA_DIR, filename)
+def load_calibrated_params(filename: str = None) -> dict:
+    """저장된 파라미터를 JSON 파일에서 불러옵니다."""
+    if filename is None:
+        filename = settings.CALIBRATED_PARAMS_FILE
+    
+    filepath = os.path.join(settings.DATA_DIR, filename)
+    with open(filepath, "r", encoding="utf-8") as f:
+        params = json.load(f)
+    return params
 
-
-def save_calibrated_params(params: Dict[str, any], filename: str = CALIBRATED_PARAMS_FILE) -> None:
-    """보정된 G2++ 파라미터를 JSON 파일에 저장합니다."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    path = _get_params_filepath(filename)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(params, f, ensure_ascii=False, indent=2)
-
-
-def load_calibrated_params(filename: str = CALIBRATED_PARAMS_FILE) -> Dict[str, float]:
-    """저장된 G2++ 파라미터를 JSON 파일에서 불러옵니다."""
-    path = _get_params_filepath(filename)
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"보정 파일을 찾을 수 없습니다: {path}. 먼저 calibrate_g2pp를 실행하세요.")
-        
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        
-    # 가격 결정 함수에서 사용할 핵심 파라미터만 float 형태로 반환
-    core_params = {k: float(v) for k, v in data.items() if k in ['a', 'b', 'sigma', 'eta', 'rho']}
-    return core_params
+# --- 내부 유틸리티 함수 ---
+def to_years(label: str) -> float:
+    label = label.strip().upper()
+    if label.endswith("M"): return int(label[:-1]) / 12.0
+    if label.endswith("Y"): return float(label[:-1])
+    raise ValueError(f"Unknown label format: {label}")
