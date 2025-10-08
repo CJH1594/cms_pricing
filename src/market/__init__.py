@@ -15,6 +15,7 @@ from .bootstrap import (
     save_market_data,
     bootstrap_if_needed,
 )
+from .curves import create_p_market_function
 
 __all__ = [
     "fill_annual_par_curve_cubic",

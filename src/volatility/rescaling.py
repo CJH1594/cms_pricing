@@ -114,26 +114,37 @@ def load_vol_surface(filename: str = None) -> pd.DataFrame:
 
 
 def rescale_vol_surface(
-    base_surface: pd.DataFrame,
     old_date_str: str,
     target_date_str: str,
+    base_surface: pd.DataFrame = None,
     use_term_structure: bool = True,
     use_tenor_adjustment: bool = True,
     use_anchors: bool = True,
     verbose: bool = False
 ) -> pd.DataFrame:
     """
-    과거 스왑션 변동성 표면을 목표 날짜 기준으로 리스케일링합니다.
-    파일이 존재하면 계산 대신 로드합니다.
+    변동성 표면을 리스케일링합니다.
+    - 결과 파일이 존재하면 즉시 로드합니다.
+    - 결과 파일이 없으면 settings의 과거 데이터를 기준으로 새로 계산합니다.
     """
     filepath = os.path.join(settings.DATA_DIR, settings.VOLATILITY_SURFACE_FILE)
     if os.path.exists(filepath):
         if verbose:
-            print(f"✓ 기존 변동성 표면 파일을 발견했습니다. 파일을 로드합니다:\n→ {filepath}")
+            print(f"✓ 기존 변동성 표면 파일을 로드합니다:\n→ {filepath}")
         return load_vol_surface()
     
     if verbose:
-        print(f"'{old_date_str}'의 변동성 표면을 '{target_date_str}' 기준으로 리스케일링합니다.")
+        print(f"[INFO] 기존 파일 없음. '{old_date_str}' 데이터를 기준으로 리스케일링을 시작합니다...")
+
+    if base_surface is None:
+        if verbose:
+            print("  - settings.py에서 과거 기준 데이터 로드 중...")
+        tenors_str = [f"{t}Y" for t in settings.TENORS]
+        base_surface = pd.DataFrame(
+            data=np.array(settings.HISTORICAL_VOL_SURFACE_PCT) / 100.0,
+            index=settings.EXPIRY_LABELS,
+            columns=tenors_str
+        )
 
     base_date = pd.Timestamp(old_date_str)
     target_date = pd.Timestamp(target_date_str)
@@ -223,3 +234,34 @@ def rescale_vol_surface(
     
     save_vol_surface(final_surface)
     return final_surface
+
+
+if __name__ == '__main__':
+    # 이 파일을 직접 실행할 경우, 간단한 테스트를 수행합니다.
+    print("=" * 70)
+    print("rescaling.py 모듈 직접 실행 테스트")
+    print("=" * 70)
+    
+    # 테스트를 위해 기존 결과 파일이 있다면 삭제
+    test_filepath = os.path.join(settings.DATA_DIR, settings.VOLATILITY_SURFACE_FILE)
+    if os.path.exists(test_filepath):
+        os.remove(test_filepath)
+        print(f"기존 테스트 파일 삭제: {test_filepath}")
+
+    # 함수 실행 (base_surface를 넘기지 않아 settings에서 자동 로드)
+    rescaled = rescale_vol_surface(
+        old_date_str="2018-04-16",
+        target_date_str=settings.TARGET_DATE_STR or date.today().strftime('%Y-%m-%d'),
+        verbose=True
+    )
+
+    print("\n[테스트 결과 (리스케일링된 표면)]")
+    print(rescaled.round(4))
+
+    print("\n[2차 실행 테스트] - 파일 로드 확인")
+    rescaled_loaded = rescale_vol_surface(
+        old_date_str="2018-04-16",
+        target_date_str=settings.TARGET_DATE_STR or date.today().strftime('%Y-%m-%d'),
+        verbose=True
+    )
+    print(rescaled_loaded.round(4))
