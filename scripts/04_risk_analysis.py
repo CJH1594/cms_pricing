@@ -4,154 +4,105 @@
 04_risk_analysis.py
 ===================
 
-현재 프로젝트에서 위험 분석 및 헷징 기능은 구현되지 않았습니다.
-이 스크립트는 향후 확장 가능성을 위한 자리표시자 역할을 합니다.
-
-향후에는 델타, 감마 등 그릭스 계산과 헷징 시뮬레이션을 추가할 수 있습니다.
+디지털 CMS 스프레드 노트의 위험 분석 및 델타 헤지 시뮬레이션 스크립트.
 """
-
 
 import os
 import sys
 import numpy as np
-from scipy.optimize import brentq
 
-# PYTHONPATH 설정
+# 프로젝트 루트를 PYTHONPATH에 추가
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-# Assuming cms_digital is in the parent directory of src/pricing
-# Adjust the import path as necessary based on your project structure
-from cms_pricing.src.market import load_market_data # bootstrap_if_needed 대신 직접 로드
-from cms_pricing.src.pricing.cms_digital import calculate_spread_note_delta, calculate_digital_bond_price
 from cms_pricing.src.pricing import load_pricing_results
-
-def _calculate_implied_volatility(product: dict) -> float:
-    """
-    디지털 본드 가격을 이용해 내재 변동성 (Implied Volatility)을 역산합니다.
-    """
-    # product에서 필요한 값들 추출
-    K = product['strike']
-    T0 = product['expiry']
-    spread_asset_price = product['spread_asset_price']
-    spread_note_value = product['price']
-    
-    # 목표 디지털 본드 가격 계산
-    # spread_note_value = notional * coupon * E[D_T * I(Spread > K)]
-    # calculate_digital_bond_price는 만기 시 1단위 현금을 지급하는 디지털 옵션 가격
-    # 따라서 목표 디지털 본드 가격은 spread_note_value / (notional * coupon)이 됩니다.
-    # 단, coupon이 0에 가까울 경우를 대비하여 처리합니다.
-    target_bond_price = spread_note_value / product['notional']
-    if product['coupon'] > 1e-9:
-        target_bond_price /= product['coupon']
-    else:
-        # 쿠폰이 0에 가깝다면, 가격 자체를 목표로 하거나 다른 처리가 필요
-        print("경고: 상품 쿠폰이 매우 작습니다. 내재 변동성 역산에 오차가 있을 수 있습니다.")
-
-    def target_function_for_iv(vol: float) -> float:
-        # 블랙-숄즈 모델 기반 디지털 콜 옵션 가격을 사용하여 목표 가격과 비교
-        bs_price = calculate_digital_bond_price(spread_asset_price, K, T0, vol)
-        return bs_price - target_bond_price
-
-    # 변동성 탐색 범위 (0.01% ~ 200%)
-    low_vol = 1e-4
-    high_vol = 2.0
-    implied_sigma = 0.15 # 찾지 못하면 초기 임시 값을 사용
-
-    try:
-        # brentq는 f(a)와 f(b)의 부호가 다를 때만 작동
-        # 따라서 경계 값에서의 함수 부호 확인이 중요합니다.
-        if target_function_for_iv(low_vol) * target_function_for_iv(high_vol) < 0:
-            implied_sigma = brentq(target_function_for_iv, low_vol, high_vol)
-        else:
-            print("내재 변동성을 찾기 위한 적절한 구간을 찾을 수 없습니다. 기본값을 사용합니다.")
-            # 필요하다면 여기에서 더 넓은 범위 탐색 또는 다른 알고리즘 시도
-    except ValueError as e:
-        print(f"내재 변동성을 찾을 수 없습니다: {e}")
-        print(f"  현재 가격 (Spread Note Value): {spread_note_value:.4f}")
-        print(f"  목표 본드 가격: {target_bond_price:.4f}")
-        print(f"  Low Vol에서의 가격 (BS): {calculate_digital_bond_price(spread_asset_price, K, T0, low_vol):.4f}")
-        print(f"  High Vol에서의 가격 (BS): {calculate_digital_bond_price(spread_asset_price, K, T0, high_vol):.4f}")
-
-    return implied_sigma
+from cms_pricing.src.pricing.cms_digital import calculate_spread_note_delta
+from cms_pricing.src.volatility.implied_volatility import calculate_implied_volatility
 
 
-def _load_and_prepare_data():
-    """
-    가격 계산 결과를 로드하고, 시장 데이터를 부트스트랩하며, G2++ 모델 관련 함수들을 생성합니다.
-    """
+def _load_product() -> dict:
+    """가격 계산 결과에서 상품 정보를 읽어온다."""
     try:
         pricing_results = load_pricing_results()
     except FileNotFoundError as e:
-        raise RuntimeError("가격 계산 결과 파일이 없습니다. 먼저 03_price_product.py를 실행하세요.") from e
+        raise RuntimeError("가격 계산 결과 파일이 없습니다. 03_price_product.py를 먼저 실행하세요.") from e
 
-    product = pricing_results['product']
-
-    return product
+    return pricing_results
 
 
-def _calculate_initial_greeks(
-    product: dict
-):
-    """
-    초기 상태에서 델타 및 포트폴리오 가치를 계산합니다.
-    """
-    # product에서 필요한 값들 추출
-    T0 = product['expiry']
-    K = product['strike']
-    S_prime_0 = product['S_prime_0']
-    S0 = product['S0']
-    spread_note_value = product['price']
+def _calculate_initial_delta(pricing_results: dict) -> tuple:
+    """상품 정보와 가격으로부터 내재변동성 및 델타를 계산한다."""
+    prod = pricing_results["product"]
+
+    # 내재변동성 역산 (뉴턴-랩슨)
+    implied_vol = calculate_implied_volatility(pricing_results, use_bachelier= True)
+
+    # 델타 계산 (Black-숄즈 디지털 옵션 델타 공식)
+    delta_long, delta_short = calculate_spread_note_delta(
+        prod["S_prime_0"],
+        prod["S0"],
+        prod["strike"],
+        prod["expiry"],
+        implied_vol,
+    )
+
+    # 현재 포트폴리오 가치 (노트 가치 - 델타 * 기초자산 가격)
+    note_value = pricing_results["price"]
+    portfolio_value = note_value - delta_long * prod["S_prime_0"] - delta_short * prod["S0"]
 
     print("로드된 상품 스펙:")
-    print(f"  만기 (T0): {T0}년")
-    print(f"  CMS Long (S_prime_0): {S_prime_0:.4f}")
-    print(f"  CMS Short (S0): {S0:.4f}")
-    print(f"  Strike (K): {K*1e4:.0f} bp")
-    print(f"  디지털 CMS 노트 가치: {spread_note_value:.2f}")
+    print(f"  만기 (T0): {prod['expiry']}년")
+    print(f"  CMS Long (S_prime_0): {prod['S_prime_0']:.6f}")
+    print(f"  CMS Short (S0): {prod['S0']:.6f}")
+    print(f"  Strike (K): {prod['strike']:.6f}")
+    print(f"  디지털 CMS 노트 가치: {note_value:.6f}")
+    print(f"  내재 변동성 (σ): {implied_vol:.6f}")
+    print(f"계산된 스프레드 노트 델타: (Long leg Δ = {delta_long:.6f}, Short leg Δ = {delta_short:.6f})")
+    print(f"초기 델타 헤지 포트폴리오 가치: {portfolio_value:.6f}")
 
-    sigma = _calculate_implied_volatility(product)
-    print(f"  내재 변동성 (Implied Sigma): {sigma:.4f}")
-
-    delta_N = calculate_spread_note_delta(S_prime_0, S0, K, T0, sigma)
-    print(f"계산된 스프레드 노트 델타 (Delta_N): ({delta_N[0]:.4f}, {delta_N[1]:.4f})")
-
-    portfolio_value = spread_note_value - delta_N[0] * S_prime_0 - delta_N[1] * S0
-    print(f"초기 델타 헤지 포트폴리오 가치: {portfolio_value:.4f}")
-
-    return S_prime_0, S0, K, T0, sigma, delta_N, portfolio_value
+    return (implied_vol, delta_long, delta_short, portfolio_value)
 
 
-def _simulate_market_shock_and_rebalance(
-    S_prime_0: float, S0: float, K: float, T0: float, sigma: float, delta_N: tuple, spread_note_value: float
-):
-    """
-    시장 변화를 시뮬레이션하고 포트폴리오를 리밸런싱합니다.
-    """
-    shock = 0.01
-    S_prime_new = S_prime_0 + shock
-    S_new = S0 + shock
+def _simulate_shock(
+    prod: dict,
+    implied_vol: float,
+    delta_long: float,
+    delta_short: float,
+    note_value: float,
+) -> None:
+    """CMS 금리에 작은 평행 이동을 가정하고 델타 헤지 포트폴리오의 변화를 평가한다."""
+    shock = 0.01  # 1bp = 0.0001, 0.01은 100bp(1%) 평행 이동 예시
+    S_prime_new = prod["S_prime_0"] + shock
+    S_new = prod["S0"] + shock
 
-    delta_N_new = calculate_spread_note_delta(S_prime_new, S_new, K, T0, sigma)
+    # 새로운 델타 (델타 재계산; 여기서는 변동성 불변 가정)
+    new_delta_long, new_delta_short = calculate_spread_note_delta(
+        S_prime_new, S_new, prod["strike"], prod["expiry"], implied_vol
+    )
 
-    spread_note_value_new = spread_note_value + 0.1 * shock # 가상의 변화
+    # 노트 가격도 평행 이동만큼 변화했다고 가정 (단순 예시)
+    # 실제로는 가중치를 고려한 가격 변화를 시뮬레이션해야 한다.
+    note_value_new = note_value + 0.1 * shock
 
-    portfolio_value_new = spread_note_value_new - delta_N[0] * S_prime_new - delta_N[1] * S_new
-    print(f"변화 후 델타 헤지 포트폴리오 가치 (초기 델타 사용): {portfolio_value_new:.4f}")
+    # 기존 델타를 사용한 포트폴리오 가치 변화
+    portfolio_value_old_hedge = note_value_new - delta_long * S_prime_new - delta_short * S_new
+    # 새로운 델타로 리밸런싱한 포트폴리오 가치
+    portfolio_value_new_hedge = note_value_new - new_delta_long * S_prime_new - new_delta_short * S_new
 
-    rebalanced_portfolio_value = spread_note_value_new - delta_N_new[0] * S_prime_new - delta_N_new[1] * S_new
-    print(f"변화 후 리밸런싱된 델타 헤지 포트폴리오 가치 (새로운 델타 사용): {rebalanced_portfolio_value:.4f}")
+    print(f"\n시장 금리 {shock:.2%} 평행 이동 후:")
+    print(f"  기존 델타 사용 포트폴리오 가치: {portfolio_value_old_hedge:.6f}")
+    print(f"  재계산한 델타로 리밸런싱한 가치: {portfolio_value_new_hedge:.6f}")
 
 
 def main() -> None:
-    print("스프레드 노트 델타 헤지 시뮬레이션")
+    # 상품 정보 및 가격 불러오기
+    pricing_results = _load_product()
+    prod = pricing_results["product"]
 
-    product = _load_and_prepare_data()
+    # 초기 델타 및 포트폴리오 가치 계산
+    implied_vol, delta_long, delta_short, portfolio_value = _calculate_initial_delta(pricing_results)
 
-    S_prime_0, S0, K, T0, sigma, delta_N, portfolio_value = _calculate_initial_greeks(product)
-
-    _simulate_market_shock_and_rebalance(
-        S_prime_0, S0, K, T0, sigma, delta_N, product['price']
-    )
+    # 시장 충격을 가정하여 포트폴리오 변화 시뮬레이션
+    _simulate_shock(prod, implied_vol, delta_long, delta_short, pricing_results["price"])
 
 
 if __name__ == "__main__":

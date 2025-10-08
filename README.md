@@ -24,3 +24,4 @@
 
 본 프로젝트는 다음 페이지에 이론적 기반을 둡니다: https://www.notion.so/CMS-284b75d0f444809e8740e1d929960859?source=copy_link
 추가적인 설명은 각 모듈의 docstring을 참조하세요.
+그릭스 계산 모듈을 따로 만들어야할듯.
