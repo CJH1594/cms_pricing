@@ -23,7 +23,7 @@ SWAP_PAYMENT_FREQUENCY = 1.0 / settings.FREQ  # settings.py의 FREQ 사용
 # 섹션 1: 시장 데이터 변환 (Black 모델 기반)
 # =============================================================================
 
-def _calculate_forward_swap_rate(expiry: float, tenor: int, p_market_func: callable) -> tuple[float, float]:
+def calculate_forward_swap_rate_market(expiry: float, tenor: int, p_market_func: callable) -> tuple[float, float]:
     """주어진 할인 곡선(P)으로부터 선도 스왑 금리와 연금을 계산합니다."""
     payment_times = np.arange(expiry + SWAP_PAYMENT_FREQUENCY, expiry + tenor + 1e-8, SWAP_PAYMENT_FREQUENCY)
     
@@ -39,7 +39,7 @@ def _calculate_forward_swap_rate(expiry: float, tenor: int, p_market_func: calla
     forward_rate = floating_pv / annuity
     return forward_rate, annuity
 
-def _black_swaption_price(forward_swap_rate: float, strike: float, volatility: float, expiry: float, annuity: float) -> float:
+def black_swaption_price(forward_swap_rate: float, strike: float, volatility: float, expiry: float, annuity: float) -> float:
     """Black-76 모델을 사용하여 스왑션 가격을 계산합니다."""
     if volatility <= 1e-9 or expiry <= 1e-9:
         return max(0.0, (forward_swap_rate - strike)) * annuity
@@ -50,7 +50,7 @@ def _black_swaption_price(forward_swap_rate: float, strike: float, volatility: f
     price = annuity * (forward_swap_rate * norm.cdf(d1) - strike * norm.cdf(d2))
     return price
 
-def _build_market_prices_from_vol(p_market_func: callable, surface_pct: list, expiry_labels: list, tenors: list) -> dict:
+def build_market_prices_from_vol_surface(p_market_func: callable, surface_pct: list, expiry_labels: list, tenors: list) -> dict:
     """변동성 표면을 Black 모델을 이용해 시장 가격 표면으로 변환합니다."""
     label_to_year = {label: to_years(label) for label in expiry_labels}
     expiries_years = [label_to_year[lbl] for lbl in expiry_labels]
@@ -59,10 +59,10 @@ def _build_market_prices_from_vol(p_market_func: callable, surface_pct: list, ex
     for i, T in enumerate(expiries_years):
         for j, tenor in enumerate(tenors):
             atm_vol = surface_pct[i][j] / 100.0
-            forward_rate, annuity = _calculate_forward_swap_rate(T, tenor, p_market_func)
+            forward_rate, annuity = calculate_forward_swap_rate_market(T, tenor, p_market_func)
             
             if forward_rate > 0 and annuity > 0:
-                market_price = _black_swaption_price(
+                market_price = black_swaption_price(
                     forward_swap_rate=forward_rate, strike=forward_rate, # ATM 옵션
                     volatility=atm_vol, expiry=T, annuity=annuity
                 )
@@ -90,7 +90,13 @@ def _V(t, T, a, b, sigma, eta, rho):
     term3 = (2*rho*sigma*eta/(a*b)) * (T_m_t + (exp(-a*T_m_t)-1)/a + (exp(-b*T_m_t)-1)/b - (exp(-(a+b)*T_m_t)-1)/(a+b))
     return term1 + term2 + term3
 
-def _price_swaption_g2_fast(params: dict, p_market_func: callable, expiry: float, tenor: int, strike: float) -> float:
+def price_european_swaption_g2_fast(
+    params: dict, 
+    p_market_func: callable, 
+    expiry: float, 
+    tenor: int,
+    strike: float
+    ) -> float:
     """Gauss-Hermite 구적법을 사용한 고속 G2++ 스왑션 가격 결정"""
     a, b, sigma, eta, rho = params['a'], params['b'], params['sigma'], params['eta'], params['rho']
     
@@ -150,9 +156,9 @@ def _compute_single_error(details: tuple, params: dict, p_market_func: callable,
     """단일 스왑션의 제곱 오차를 계산 (병렬 처리용)"""
     expiry, tenor = details
     market_price = market_prices[details]
-    forward_rate, _ = _calculate_forward_swap_rate(expiry, tenor, p_market_func)
+    forward_rate, _ = calculate_forward_swap_rate_market(expiry, tenor, p_market_func)
     
-    model_price = _price_swaption_g2_fast(params, p_market_func, expiry, tenor, forward_rate)
+    model_price = price_european_swaption_g2_fast(params, p_market_func, expiry, tenor, forward_rate)
     
     return (model_price - market_price)**2
 
@@ -198,7 +204,7 @@ def calibrate_g2pp(p_market_func: callable, surface_pct: list, expiry_labels: li
 
     # 1. 변동성 표면을 시장 가격으로 변환
     print("  - 시장 가격 계산 중...")
-    market_prices = _build_market_prices_from_vol(p_market_func, surface_pct, expiry_labels, tenors)
+    market_prices = build_market_prices_from_vol_surface(p_market_func, surface_pct, expiry_labels, tenors)
     
     # 2. 최적화 실행
     print("  - G2++ 파라미터 최적화 시작...")

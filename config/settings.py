@@ -23,8 +23,14 @@ FREQ = 2
 
 ## Par 스왑 금리 (단위: %).
 PAR_RATES_PCT = {
-    1: 3.649, 2: 3.395, 3: 3.335, 5: 3.358, 7: 3.452,
-    10: 3.607, 15: 3.810, 30: 3.863,
+    1: 3.649, 
+    2: 3.395, 
+    3: 3.335, 
+    5: 3.358, 
+    7: 3.452,
+    10: 3.607, 
+    15: 3.810, 
+    30: 3.863,
 }
 
 ## 스왑션 변동성 표면 기본 라벨 (만기 × 테너)
@@ -81,7 +87,9 @@ NUM_PATHS = 50000
 SIMULATION_NUM_STEPS_PER_YEAR = 252
 
 ## 가격 결정 결과 파일 이름
-PRICING_RESULTS_FILE = "pricing_results.json"
+# **[수정 필요]**: DATA_DIR과 합쳐서 전체 경로를 정의해야 합니다.
+PRICING_RESULTS_FILE_NAME = "pricing_results.json" # 파일 이름만 따로 정의
+PRICING_RESULTS_FILE = os.path.join(DATA_DIR, PRICING_RESULTS_FILE_NAME) # 전체 파일 경로 (절대 경로)
 
 ## 리스크 분석 쇼크 값
 RISK_SHOCK_AMOUNT = 0.0001 # 1bp

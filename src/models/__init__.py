@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# cms_pricing/src/models/__init__.py
 """
 `models` 패키지는 금리 모형(G2++ 등)의 정의와 파라미터 보정 로직을 포함합니다.
 
@@ -24,6 +25,10 @@ from .g2pp import (
 from .calibration import (
     calibrate_g2pp,
     load_calibrated_params,
+    build_market_prices_from_vol_surface,
+    calculate_forward_swap_rate_market,
+    price_european_swaption_g2_fast,
+    black_swaption_price,
 )
 
 __all__ = [
@@ -42,4 +47,5 @@ __all__ = [
     "build_market_prices_from_vol_surface",
     "calibrate_g2pp",
     "load_calibrated_params",
+    "price_european_swaption_g2_fast",
 ]
