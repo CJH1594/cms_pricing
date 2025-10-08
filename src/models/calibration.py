@@ -1,18 +1,20 @@
 # cms_pricing/src/models/calibration.py
 
+import sys
+import os
 import json
 import time
 from functools import lru_cache
 from math import exp, log, sqrt
-
+ 
 import numpy as np
 from joblib import Parallel, delayed
 from scipy.interpolate import CubicSpline
 from scipy.optimize import minimize, root_scalar
 from scipy.stats import norm
-
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 # 프로젝트 설정 파일에서 필요한 값들을 가져옵니다.
-from config import settings
+from cms_pricing.config import settings
 
 # --- 모듈 상수 ---
 SWAP_PAYMENT_FREQUENCY = 1.0 / settings.FREQ  # settings.py의 FREQ 사용
@@ -209,7 +211,7 @@ def calibrate_g2pp(p_market_func: callable, surface_pct: list, expiry_labels: li
         x0=initial_array,
         args=(p_market_func, market_prices, iteration_counter),
         method='Nelder-Mead',
-        options={'maxiter': 100, 'adaptive': True, 'xatol': 1e-6, 'fatol': 1e-8}
+        options={'maxiter': 50, 'adaptive': True, 'xatol': 1e-6, 'fatol': 1e-8}
     )
     elapsed = time.time() - start_time
     print("\n  - 최적화 완료.")

@@ -1,96 +1,105 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-02_calibrate_g2pp.py
-====================
+# cms_pricing/scripts/02_calibrate_g2pp.py
 
-이 스크립트는 과거 ATM 스왑션 변동성 표면을 MOVE 지수로 리스케일링한 후,
-G2++ 모델의 파라미터를 최적화합니다. 최적화된 파라미터는
-`data/calibrated_params.json`에 저장됩니다.
-"""
-
-import os
 import sys
-import datetime as _dt
-import numpy as np
+import os
 import pandas as pd
-import json # Import json for specific exception handling
+import numpy as np
+from datetime import date
+import json
 
-# PYTHONPATH 설정
+# --- 1. PYTHONPATH 설정 ---
+# 프로젝트 최상위 폴더(cms_pricing의 부모)를 경로에 추가
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from cms_pricing.src.market import bootstrap_if_needed, create_continuous_zero_curve
-from cms_pricing.src.volatility import rescale_vol_surface, save_vol_surface
-from cms_pricing.src.models import calibrate_g2pp
-from cms_pricing.config.settings import (
-    EXPIRY_LABELS,
-    TENORS,
-    TARGET_DATE_STR, # Add TARGET_DATE_STR to imports
-)
+
+# --- 2. 절대 경로로 모듈 임포트 ---
+from cms_pricing.config import settings
+from cms_pricing.src.volatility import rescale_vol_surface # save/load는 rescale 함수가 담당
+from cms_pricing.src.models import calibrate_g2pp, load_calibrated_params
 
 
-def main() -> None:
-    """
-    스크립트 메인 함수.
+# --- 3. 나머지 스크립트 로직 ---
+def load_base_vol_surface(date_str: str) -> pd.DataFrame:
+    """과거 기준일의 변동성 데이터를 로드하는 임시 함수."""
+    if date_str == "2018-04-16":
+        data_pct = [
+            [12.4559, 15.6906, 18.5884, 18.7795, 18.0630, 17.7101, 17.5578],
+            [14.1064, 17.1848, 19.5244, 19.6338, 18.9183, 18.5667, 18.4021],
+            [15.3294, 18.1170, 20.7427, 20.7399, 19.9287, 19.5322, 19.3833],
+            [17.7833, 20.1802, 22.1637, 21.9932, 21.0658, 20.5908, 20.3785],
+            [22.1572, 23.2539, 23.9005, 23.0334, 21.9114, 21.2860, 21.0047],
+        ]
+        tenors_str = [f"{t}Y" for t in settings.TENORS]
+        return pd.DataFrame(
+            data=np.array(data_pct) / 100.0,
+            index=settings.EXPIRY_LABELS,
+            columns=tenors_str
+        )
+    else:
+        raise FileNotFoundError(f"{date_str}에 해당하는 데이터가 없습니다.")
 
-    시장 데이터 부트스트랩, 변동성 표면 리스케일링, G2++ 보정을 순차적으로 수행합니다.
-    이미 보정된 파라미터가 데이터 폴더에 존재하면 재사용하여 시간을 절약합니다.
-    """
-    # 1. 시장 데이터 부트스트랩 (필요 시 로드)
-    # 재현성을 위해 스왑 고정 다리 빈도(FREQ) 변경 시 강제 재부트스트랩
-    par_full, P_year = bootstrap_if_needed(force=True)
-    zero_curve = create_continuous_zero_curve(P_year)
-    P_market = lambda t: np.exp(-zero_curve(t) * t)
+def main():
+    """G2++ 모델 보정 프로세스를 실행하는 메인 함수"""
+    print("=" * 70)
+    print("G2++ 모델 보정 스크립트 시작")
+    print("=" * 70)
 
-    # 2. 과거 ATM 변동성 표면 정의 (2018-04-16, Black %)
-    # expiries = ["1M", "3M", "6M", "1Y", "2Y"]
-    # tenors = ["1Y", "2Y", "5Y", "10Y", "15Y", "20Y", "30Y"]
-    data_2018_04_16_pct = [
-        [12.4559, 15.6906, 18.5884, 18.7795, 18.0630, 17.7101, 17.5578],
-        [14.1064, 17.1848, 19.5244, 19.6338, 18.9183, 18.5667, 18.4021],
-        [15.3294, 18.1170, 20.7427, 20.7399, 19.9287, 19.5322, 19.3833],
-        [17.7833, 20.1802, 22.1637, 21.9932, 21.0658, 20.5908, 20.3785],
-        [22.1572, 23.2539, 23.9005, 23.0334, 21.9114, 21.2860, 21.0047],
-    ]
-    vol_old = pd.DataFrame(np.array(data_2018_04_16_pct) / 100.0, index=EXPIRY_LABELS, columns=TENORS)
+    # 1. 기준 데이터 로드
+    base_date_str = "2018-04-16"
+    base_vol_surface = load_base_vol_surface(date_str=base_date_str)
+    print(f"✓ '{base_date_str}' 기준 변동성 표면 로드 완료.")
 
-    # 3. 날짜 설정
-    old_date_str = "2018-04-16"
-    target_date_str = TARGET_DATE_STR # Use TARGET_DATE_STR from settings
+    # 2. 목표 날짜 설정
+    target_date_str = settings.TARGET_DATE_STR or date.today().strftime('%Y-%m-%d')
+    print(f"→ 목표 날짜: {target_date_str}")
 
-    # 4. MOVE 지수로 리스케일링
-    # 디버깅을 위해 상세 출력 활성화
+    # 3. 변동성 표면 리스케일링 또는 로드
+    print("\n[단계 1] 변동성 표면 리스케일링 또는 로드 중...")
     vol_rescaled = rescale_vol_surface(
-        vol_old,
-        old_date_str=old_date_str,
+        base_surface=base_vol_surface,
+        old_date_str=base_date_str,
         target_date_str=target_date_str,
-        verbose=False,
+        verbose=True,
     )
-    save_vol_surface(vol_rescaled)
-    print("✓ 변동성 표면 리스케일링 및 저장 완료")
+    print("✓ 리스케일링/로드 완료.")
 
-    # 5. G2++ 파라미터 보정 또는 로드
-    # JSON 파일이 존재하면 로드하고, 없으면 보정 수행
+    # 4. G2++ 모델 보정
+    print("\n[단계 2] G2++ 모델 보정 중...")
     try:
-        from cms_pricing.src.models import load_calibrated_params
         params = load_calibrated_params()
         print("✓ 저장된 파라미터를 로드했습니다. 보정을 건너뜁니다.")
     except (FileNotFoundError, json.JSONDecodeError):
-        # 보정 수행: surface_pct는 % 단위 변동성
+        print("  - 저장된 파라미터 없음. 새로 보정을 시작합니다.")
+        from scipy.interpolate import CubicSpline
+        from math import exp
+        
+        par_rates_dec = {t: r/100.0 for t, r in settings.PAR_RATES_PCT.items()}
+        maturities = np.array([0] + sorted(par_rates_dec.keys()))
+        dfs = np.array([1.0] + [1/(1+par_rates_dec[t])**t for t in sorted(par_rates_dec.keys())])
+        zero_rates = -np.log(dfs) / (maturities + 1e-9)
+        zero_rates[0] = zero_rates[1]
+        continuous_zero_curve = CubicSpline(maturities, zero_rates)
+        p_market_func = lambda t: exp(-continuous_zero_curve(t) * t)
+
         surface_pct = (vol_rescaled * 100.0).values.tolist()
         params = calibrate_g2pp(
-            P_market,
+            p_market_func=p_market_func,
             surface_pct=surface_pct,
-            expiry_labels=EXPIRY_LABELS,
-            tenors=TENORS,
+            expiry_labels=settings.EXPIRY_LABELS,
+            tenors=settings.TENORS,
+            initial_params=settings.INITIAL_G2_PARAMS
         )
-        print("\n보정 결과:")
-        for key in ['a', 'b', 'sigma', 'eta', 'rho']:
-            print(f"  {key}: {params[key]:.6f}")
-        print(f"  최종 오차: {params['final_error']:.8f}")
-        print(f"  반복 횟수: {params['iterations']}")
-        print(f"  상태: {params['status']}")
-        print("\n✓ 보정된 파라미터가 data/에 저장되었습니다.")
+
+    print("\n[결과] 최종 G2++ 파라미터:")
+    for key, value in params.items():
+        if isinstance(value, float):
+            print(f"  - {key:<18}: {value:.6f}")
+        else:
+            print(f"  - {key:<18}: {value}")
+            
+    print("\n" + "=" * 70)
+    print("스크립트 실행 완료")
+    print("=" * 70)
 
 
 if __name__ == "__main__":

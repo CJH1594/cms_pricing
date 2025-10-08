@@ -1,13 +1,4 @@
-# -*- coding: utf-8 -*-
-"""
-개선된 ATM 스왑션 변동성 표면 리스케일링 기능
-
-주요 기능:
-- Term structure를 고려한 만기별 스케일링
-- Tenor별 차등 조정
-- 다중 앵커 포인트(시장 데이터)를 사용한 표면 보정
-- yfinance를 통한 MOVE 지수 다운로드 및 강화된 오류 처리
-"""
+# src/volatility/rescaling.py
 
 import os
 import json
@@ -20,26 +11,14 @@ import yfinance as yf
 from pandas.tseries.offsets import BDay
 from scipy.interpolate import Rbf
 
-# cms_pricing 프로젝트의 설정 파일 임포트
-# (프로젝트 루트가 Python 경로에 포함되어 있어야 합니다)
-from config import settings
+# config.settings 임포트 (프로젝트 루트가 PYTHONPATH에 있어야 함)
+from cms_pricing.config import settings
 
 warnings.filterwarnings('ignore')
 
 
 def to_years(label: str | int) -> float:
-    """
-    만기/테너 라벨(예: "1M", "2Y", 10)을 연 단위 숫자로 변환합니다.
-
-    Args:
-        label (str | int): 변환할 라벨.
-
-    Returns:
-        float: 연 단위 수치.
-
-    Raises:
-        ValueError: 인식할 수 없는 라벨 형식일 경우.
-    """
+    """만기/테너 라벨(예: "1M", "2Y", 10)을 연 단위 숫자로 변환합니다."""
     if isinstance(label, (int, float)):
         return float(label)
     
@@ -53,23 +32,11 @@ def to_years(label: str | int) -> float:
 
 
 def _fetch_move_index(start_date: pd.Timestamp, end_date: pd.Timestamp, max_retries: int = 3) -> pd.Series | None:
-    """
-    Yahoo Finance에서 MOVE 지수를 다운로드합니다. (재시도 및 오류 처리 기능 포함)
-    
-    Args:
-        start_date (pd.Timestamp): 조회 시작일.
-        end_date (pd.Timestamp): 조회 종료일.
-        max_retries (int): 실패 시 재시도 횟수.
-
-    Returns:
-        pd.Series | None: 성공 시 MOVE 지수 시계열, 실패 시 None.
-    """
+    """Yahoo Finance에서 MOVE 지수를 다운로드합니다 (재시도 기능 포함)."""
     for attempt in range(max_retries):
         try:
-            # 영업일 기준 20일 전부터 5일 후까지 여유롭게 다운로드
             buffer_start = start_date - BDay(20)
             buffer_end = end_date + BDay(5)
-
             df = yf.download("^MOVE", start=buffer_start, end=buffer_end, auto_adjust=False, progress=False)
 
             if df is None or df.empty:
@@ -77,8 +44,6 @@ def _fetch_move_index(start_date: pd.Timestamp, end_date: pd.Timestamp, max_retr
 
             col = "Adj Close" if "Adj Close" in df.columns else "Close"
             series = df[col].dropna()
-            
-            # 일별 마지막 값만 사용하도록 그룹화
             series = series.groupby(series.index.date).last()
             series.index = pd.to_datetime(series.index)
             
@@ -94,26 +59,11 @@ def _fetch_move_index(start_date: pd.Timestamp, end_date: pd.Timestamp, max_retr
     return None
 
 def _get_move_for_date(series: pd.Series, target_date: pd.Timestamp, max_lookback_days: int = 10) -> float:
-    """
-    다운로드된 시계열 데이터에서 특정 날짜의 MOVE 지수 값을 찾습니다.
-    해당 날짜에 값이 없으면 가장 가까운 과거 영업일의 값을 사용합니다.
-    
-    Args:
-        series (pd.Series): MOVE 지수 시계열.
-        target_date (pd.Timestamp): 값을 찾을 목표 날짜.
-        max_lookback_days (int): 최대 며칠 전 데이터까지 유효하게 볼 것인지 설정.
-
-    Returns:
-        float: 해당 날짜의 MOVE 지수 값.
-
-    Raises:
-        ValueError: 유효한 기간 내에 데이터를 찾지 못했을 경우.
-    """
+    """시계열 데이터에서 특정 날짜의 MOVE 지수 값을 찾습니다."""
     s_clean = series.dropna()
     if target_date in s_clean.index:
         return float(s_clean.loc[target_date])
 
-    # target_date보다 작거나 같은 인덱스 중 가장 최근 날짜를 찾음
     prev_indices = s_clean.index[s_clean.index <= target_date]
     if len(prev_indices) == 0:
         raise ValueError(f"{target_date.date()} 이전의 MOVE 데이터를 찾을 수 없습니다.")
@@ -127,36 +77,64 @@ def _get_move_for_date(series: pd.Series, target_date: pd.Timestamp, max_lookbac
     return float(s_clean.loc[nearest_date])
 
 
-# volatility/rescaling.py 파일의 rescale_vol_surface 함수를 아래 코드로 교체하세요.
+def save_vol_surface(vol_surface: pd.DataFrame, filename: str = None) -> None:
+    """변동성 표면 DataFrame을 JSON 파일로 저장합니다."""
+    if filename is None:
+        filename = settings.VOLATILITY_SURFACE_FILE
+    
+    filepath = os.path.join(settings.DATA_DIR, filename)
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
+    
+    print(f"계산된 변동성 표면을 다음 경로에 저장합니다:\n→ {filepath}")
+    
+    data = {
+        "index": list(map(str, vol_surface.index)),
+        "columns": list(map(str, vol_surface.columns)),
+        "values": vol_surface.values.tolist(),
+    }
+    
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        
+    print("✓ 저장이 완료되었습니다.")
+
+
+def load_vol_surface(filename: str = None) -> pd.DataFrame:
+    """JSON 파일에서 변동성 표면을 로드하는 함수"""
+    if filename is None:
+        filename = settings.VOLATILITY_SURFACE_FILE
+    
+    filepath = os.path.join(settings.DATA_DIR, filename)
+    
+    with open(filepath, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        
+    surface = pd.DataFrame(data=data['values'], index=data['index'], columns=data['columns'])
+    return surface
+
 
 def rescale_vol_surface(
     base_surface: pd.DataFrame,
-    old_date_str: str,                 # <<< 1. 인자 이름 변경 (base_date_str -> old_date_str)
+    old_date_str: str,
     target_date_str: str,
     use_term_structure: bool = True,
     use_tenor_adjustment: bool = True,
     use_anchors: bool = True,
-    verbose: bool = False              # <<< 2. verbose 인자 추가
+    verbose: bool = False
 ) -> pd.DataFrame:
     """
     과거 스왑션 변동성 표면을 목표 날짜 기준으로 리스케일링합니다.
-
-    Args:
-        base_surface (pd.DataFrame): 리스케일링할 기준 변동성 표면.
-        old_date_str (str): 기준 표면의 날짜 (YYYY-MM-DD).
-        target_date_str (str): 리스케일링할 목표 날짜 (YYYY-MM-DD).
-        use_term_structure (bool): 만기별 차등 스케일링 적용 여부.
-        use_tenor_adjustment (bool): 테너별 차등 조정 적용 여부.
-        use_anchors (bool): 앵커 포인트를 사용한 표면 보정 적용 여부.
-        verbose (bool): True일 경우 상세 진행 과정을 출력합니다.
-
-    Returns:
-        pd.DataFrame: 리스케일링이 완료된 새로운 변동성 표면.
+    파일이 존재하면 계산 대신 로드합니다.
     """
+    filepath = os.path.join(settings.DATA_DIR, settings.VOLATILITY_SURFACE_FILE)
+    if os.path.exists(filepath):
+        if verbose:
+            print(f"✓ 기존 변동성 표면 파일을 발견했습니다. 파일을 로드합니다:\n→ {filepath}")
+        return load_vol_surface()
+    
     if verbose:
         print(f"'{old_date_str}'의 변동성 표면을 '{target_date_str}' 기준으로 리스케일링합니다.")
 
-    # 1. 날짜 및 MOVE 지수 준비
     base_date = pd.Timestamp(old_date_str)
     target_date = pd.Timestamp(target_date_str)
 
@@ -189,7 +167,6 @@ def rescale_vol_surface(
     if verbose:
         print(f"→ 기본 스케일링 비율(k): {k_base:.4f}")
 
-    # 2. 스케일링 행렬 생성
     scaled_surface = base_surface.copy()
     
     for expiry in base_surface.index:
@@ -204,19 +181,17 @@ def rescale_vol_surface(
                 boost = settings.TENOR_SHORT_BOOST
                 discount = settings.TENOR_LONG_DISCOUNT
                 factor = 1.0
-                if tenor_years <= 5:
-                    factor = 1.0 + boost
-                elif tenor_years > 10:
-                    factor = 1.0 + discount
+                if tenor_years <= 5: factor = 1.0 + boost
+                elif tenor_years > 10: factor = 1.0 + discount
                 else:
                     weight = (tenor_years - 5) / 5
                     factor = (1 + boost) * (1 - weight) + (1 + discount) * weight
                 k *= factor
             scaled_surface.loc[expiry, tenor] *= k
 
-    # 3. 앵커 포인트 보정
     anchor_points = settings.ANCHOR_POINTS
     if not (use_anchors and anchor_points):
+        save_vol_surface(scaled_surface)
         return scaled_surface
 
     if verbose:
@@ -236,6 +211,7 @@ def rescale_vol_surface(
     if len(anchor_ratios) < 2:
         if verbose:
             print("  [경고] 2D 보간을 위한 앵커 포인트가 부족하여 보정을 건너뜁니다.")
+        save_vol_surface(scaled_surface)
         return scaled_surface
 
     rbf_interp = Rbf(anchor_coords_exp, anchor_coords_ten, anchor_ratios, function='multiquadric', smooth=0.1)
@@ -245,41 +221,5 @@ def rescale_vol_surface(
     adjustment_grid = rbf_interp(expiry_grid, tenor_grid)
     final_surface = scaled_surface * adjustment_grid
     
+    save_vol_surface(final_surface)
     return final_surface
-
-
-def _get_surface_path(filename: str) -> str:
-    """데이터 디렉터리와 파일명을 결합하여 전체 파일 경로를 반환합니다."""
-    return os.path.join(settings.DATA_DIR, filename)
-
-def save_vol_surface(
-    vol_surface: pd.DataFrame, 
-    filename: str = settings.VOLATILITY_SURFACE_FILE
-) -> None:
-    """
-    변동성 표면 DataFrame을 지정된 구조의 JSON 파일로 저장합니다.
-
-    Args:
-        vol_surface (pd.DataFrame): 저장할 변동성 표면.
-        filename (str): 저장할 파일 이름. settings.py의 기본값을 사용합니다.
-    """
-    # 데이터 저장 디렉터리가 없으면 생성
-    os.makedirs(settings.DATA_DIR, exist_ok=True)
-    
-    # 전체 저장 경로 생성
-    path = _get_surface_path(filename)
-    
-    print(f"\n계산된 변동성 표면을 다음 경로에 저장합니다:\n→ {path}")
-    
-    # 제공된 형식에 맞춰 데이터 구조화
-    data = {
-        "index": list(map(str, vol_surface.index)),
-        "columns": list(map(str, vol_surface.columns)),
-        "values": vol_surface.values.tolist(),
-    }
-    
-    # JSON 파일로 저장
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        
-    print("✓ 저장이 완료되었습니다.")

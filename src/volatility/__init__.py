@@ -5,7 +5,7 @@
 다중 앵커 포인트를 적용하는 도구가 포함됩니다.
 """
 
-from .rescaling import rescale_vol_surface, save_vol_surface
+from .rescaling import rescale_vol_surface
 
 __all__ = [
     'rescale_vol_surface',
