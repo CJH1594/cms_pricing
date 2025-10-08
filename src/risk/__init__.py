@@ -1,8 +1,11 @@
-# -*- coding: utf-8 -*-
+# cms_pricing/src/risk/__init__.py
+
 """
-`risk` 모듈은 위험 관리 및 헷징과 관련된 기능을 위한 공간입니다.
-현재는 구현되지 않았으나, 향후 델타/감마 계산, 헷지 전략 개발 등이
-추가될 예정입니다.
+`risk` 패키지는 파생상품의 리스크를 분석하는 공통 엔진을 포함합니다.
 """
 
-__all__ = []
+from .engine import run_risk_analysis
+
+__all__ = [
+    "run_risk_analysis",
+]

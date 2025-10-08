@@ -6,6 +6,13 @@
 * ``calibration``: 스왑션 시장 데이터를 사용한 G2++ 파라미터 보정
 """
 
+from .analytic import (
+    get_analytic_model,
+    AnalyticModel,
+    GBMModel,
+    BachelierModel,
+)
+
 from .g2pp import (
     make_lnP_spline,
     phi_g2pp_factory,
@@ -23,6 +30,10 @@ from .calibration import (
 )
 
 __all__ = [
+    "get_analytic_model",
+    "AnalyticModel",
+    "GBMModel",
+    "BachelierModel",
     "make_lnP_spline",
     "phi_g2pp_factory",
     "simulate_g2_paths",

@@ -1,17 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-프로젝트 전반에서 사용하는 기본 설정을 정의합니다.
-
-• FREQ: 이자 지급 빈도 (예: 연 1회=1, 연 2회=2 등)
-• 데이터 파일 경로: 부트스트랩 결과, 보정된 파라미터,
-  변동성 표면 등을 JSON 형식으로 저장하기 위한 경로를 정의합니다.
-• 기본 Par 금리: 금리 부트스트래핑에 사용될 스왑 시장의 Par 금리를 지정합니다.
-"""
+# cms_pricing/config/settings.py
 
 import os
 
 ## 프로젝트 루트 디렉터리 계산
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+# 이 파일(settings.py)이 있는 config 폴더의 부모 폴더(cms_pricing)가 기준
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 ## 데이터가 저장될 디렉터리
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -20,36 +13,38 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
 
 ## 파일 이름 정의
-MARKET_DATA_FILE = "market_data.json"  # 부트스트랩 결과 저장
-CALIBRATED_PARAMS_FILE = "calibrated_params.json"  # G2++ 보정 결과 저장
-VOLATILITY_SURFACE_FILE = "volatility_surface.json"  # 리스케일된 변동성 표면 저장
+MARKET_DATA_FILE = "market_data.json"
+CALIBRATED_PARAMS_FILE = "calibrated_params.json"
+VOLATILITY_SURFACE_FILE = "volatility_surface.json"
 
 ## 기본 설정
-FREQ = 1  # 고정 다리 지급 빈도 (연 1회)
+FREQ = 1
 
-## Par 스왑 금리 (단위: %). 필요한 경우 수정하거나 스크립트에서 로드 가능
+## Par 스왑 금리 (단위: %).
 PAR_RATES_PCT = {
-    1: 3.649,
-    2: 3.395,
-    3: 3.335,
-    5: 3.358,
-    7: 3.452,
-    10: 3.607,
-    15: 3.810,
-    30: 3.863,
+    1: 3.649, 2: 3.395, 3: 3.335, 5: 3.358, 7: 3.452,
+    10: 3.607, 15: 3.810, 30: 3.863,
 }
 
-## 스왑션 변동성 표면 기본 라벨 (만기 × 텐서)
+## 스왑션 변동성 표면 기본 라벨 (만기 × 테너)
 EXPIRY_LABELS = ["1M", "3M", "6M", "1Y", "2Y"]
 TENORS = [1, 2, 5, 10, 15, 20, 30]
 
-## 보정 초기값 (옵션). 원하는 경우 이 값을 변경하여 탐색을 다양화할 수 있습니다.
+# --- 이 부분이 추가되었습니다 ---
+## 기본 ATM 스왑션 변동성 표면 (단위: %). EXPIRY_LABELS x TENORS 크기
+## (실제 시장 데이터로 교체해야 하는 예시 값입니다)
+SWAPTION_VOL_SURFACE = [
+    [35.5, 34.0, 31.5, 28.0, 26.5, 25.0, 23.5],  # 1M
+    [36.0, 34.5, 32.0, 28.5, 27.0, 25.5, 24.0],  # 3M
+    [35.0, 33.5, 31.0, 27.5, 26.0, 24.5, 23.0],  # 6M
+    [32.0, 30.5, 28.5, 25.5, 24.5, 23.5, 22.0],  # 1Y
+    [28.0, 27.0, 25.5, 23.5, 22.5, 21.5, 20.5],  # 2Y
+]
+# ---------------------------------
+
+## 보정 초기값
 INITIAL_G2_PARAMS = {
-    "a": 0.268,
-    "b": 0.337,
-    "sigma": 0.0179,
-    "eta": 0.0144,
-    "rho": 0.977,
+    "a": 0.1, "b": 0.2, "sigma": 0.01, "eta": 0.015, "rho": -0.5,
 }
 
 ## MOVE 지수 스케일링 관련 기본 파라미터
@@ -57,7 +52,5 @@ TERM_DECAY = 0.3
 TENOR_SHORT_BOOST = 0.05
 TENOR_LONG_DISCOUNT = -0.03
 
-## 앵커 포인트 예시 (필요 시 수정). 키는 (만기, 텐서), 값은 목표 변동성 (소수)
-ANCHOR_POINTS = {
-    # ("1Y", "10Y"): 0.215,
-}
+## 앵커 포인트 예시
+ANCHOR_POINTS = {}
