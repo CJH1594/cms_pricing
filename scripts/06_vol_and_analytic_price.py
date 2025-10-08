@@ -16,10 +16,7 @@ import sys
 import numpy as np
 
 # 프로젝트 루트를 PYTHONPATH에 추가
-# -m 옵션으로 실행하는 것을 권장하지만, 직접 실행을 위해 경로를 추가합니다.
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 # 모듈 임포트
 from cms_pricing.src.models.analytic import BachelierModel
