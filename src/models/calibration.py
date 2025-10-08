@@ -44,13 +44,13 @@ def black_swaption_price(forward_swap_rate: float,
     변동성이나 만기가 0 이하이면 0을 반환합니다.
     """
     if volatility <= 1e-9 or expiry <= 1e-9:
-        return 0.0
+        if is_payer:
+            return annuity * max(0.0, forward_swap_rate - strike)
+        else:
+            return annuity * max(0.0, strike - forward_swap_rate)
     
     # 등가격 옵션에서 log(1)=0이 되는 것을 피하기 위해 작은 epsilon 추가
-    if abs(forward_swap_rate - strike) < 1e-9:
-        d1 = (0.5 * volatility ** 2 * expiry) / (volatility * sqrt(expiry))
-    else:
-        d1 = (log(forward_swap_rate / strike) + 0.5 * volatility ** 2 * expiry) / (volatility * sqrt(expiry))
+    d1 = (log(forward_swap_rate / strike) + 0.5 * volatility ** 2 * expiry) / (volatility * sqrt(expiry))
     
     d2 = d1 - volatility * sqrt(expiry)
     
@@ -133,10 +133,28 @@ def calculate_V_cached(t: float, T: float, a: float, b: float,
     if abs(a) < 1e-9 or abs(b) < 1e-9:
         return 0.0
         
-    term1 = (sigma**2 / a**2) * (T_m_t + (2 / a) * np.exp(-a * T_m_t) - (1 / (2 * a)) * np.exp(-2 * a * T_m_t) - 3 / (2 * a))
-    term2 = (eta**2 / b**2) * (T_m_t + (2 / b) * np.exp(-b * T_m_t) - (1 / (2 * b)) * np.exp(-2 * b * T_m_t) - 3 / (2 * b))
-    term3 = (2 * rho * sigma * eta / (a * b)) * (T_m_t + (np.exp(-a * T_m_t) - 1) / a + (np.exp(-b * T_m_t) - 1) / b - (np.exp(-(a + b) * T_m_t) - 1) / (a + b))
+    # term1 calculation
+    if abs(a) < 1e-9:
+        term1 = (sigma**2 / 2) * T_m_t**2
+    else:
+        term1 = (sigma**2 / a**2) * (T_m_t + (2 / a) * np.exp(-a * T_m_t) - (1 / (2 * a)) * np.exp(-2 * a * T_m_t) - 3 / (2 * a))
+
+    # term2 calculation
+    if abs(b) < 1e-9:
+        term2 = (eta**2 / 2) * T_m_t**2
+    else:
+        term2 = (eta**2 / b**2) * (T_m_t + (2 / b) * np.exp(-b * T_m_t) - (1 / (2 * b)) * np.exp(-2 * b * T_m_t) - 3 / (2 * b))
     
+    # term3 calculation
+    if abs(a) < 1e-9 and abs(b) < 1e-9:
+        term3 = rho * sigma * eta * T_m_t**2
+    elif abs(a) < 1e-9:
+        term3 = (2 * rho * sigma * eta / b) * (T_m_t + (np.exp(-b * T_m_t) - 1) / b - (np.exp(-b * T_m_t) - 1) / b)
+    elif abs(b) < 1e-9:
+        term3 = (2 * rho * sigma * eta / a) * (T_m_t + (np.exp(-a * T_m_t) - 1) / a - (np.exp(-a * T_m_t) - 1) / a)
+    else:
+        term3 = (2 * rho * sigma * eta / (a * b)) * (T_m_t + (np.exp(-a * T_m_t) - 1) / a + (np.exp(-b * T_m_t) - 1) / b - (np.exp(-(a + b) * T_m_t) - 1) / (a + b))
+
     return term1 + term2 + term3
 
 

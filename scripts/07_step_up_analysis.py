@@ -11,6 +11,7 @@ Bachelier 모델을 사용하여 스텝업 노트의 예상 쿠폰과 리스크 
 import os
 import sys
 import numpy as np
+import json # Import json for specific exception handling
 
 # 프로젝트 루트를 PYTHONPATH에 추가
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -18,6 +19,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 # 모듈 임포트
 from cms_pricing.src.models.analytic import BachelierModel
 from cms_pricing.src.pricing.utils import load_pricing_results
+from cms_pricing.config.settings import (
+    RISK_SHOCK_AMOUNT,
+)
 
 class StepUpPricer:
     """Bachelier 모델 기반 스텝업 노트의 예상 쿠폰 및 리스크 계산기."""
@@ -78,10 +82,8 @@ def main():
         S0 = results['product']['spread_asset_price']
         sigma = results['stats']['spread_std'] / np.sqrt(results['product']['expiry'])
         print("✓ pricing_results.json에서 S0, sigma 값 로드 완료.")
-    except (FileNotFoundError, KeyError):
-        print("⚠ pricing_results.json 파일을 찾을 수 없어 기본값을 사용합니다.")
-        S0 = 0.004877  # 현재 선도 스프레드
-        sigma = 0.004728 # 내재 변동성
+    except (FileNotFoundError, KeyError, json.JSONDecodeError) as e: # Add json.JSONDecodeError
+        raise RuntimeError("가격 계산 결과 파일(pricing_results.json)을 찾을 수 없습니다. 03_price_product.py를 먼저 실행하거나 파일이 손상되지 않았는지 확인하세요.") from e
     
     product_spec = {
         'expiry': 1.0,
@@ -113,7 +115,7 @@ def main():
 
     # --- 3. 헤지 시뮬레이션 ---
     print("\n[헤지 시뮬레이션]")
-    shock = 0.0001  # +1bp 충격
+    shock = RISK_SHOCK_AMOUNT  # +1bp 충격 (config에서 로드)
     S_new = S0 + shock
 
     # 충격 후 실제 예상 쿠폰

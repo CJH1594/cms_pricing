@@ -14,6 +14,7 @@
 import os
 import sys
 import numpy as np
+import json # Added for json.JSONDecodeError
 
 # 프로젝트 루트를 PYTHONPATH에 추가
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -28,7 +29,7 @@ def main() -> None:
     try:
         results = load_pricing_results()
         print("✓ 데이터 로드 완료.")
-    except FileNotFoundError as e:
+    except (FileNotFoundError, json.JSONDecodeError) as e: # Add json.JSONDecodeError
         raise RuntimeError("가격 계산 결과 파일이 없습니다. 03_price_product.py를 먼저 실행하세요.") from e
 
     # 필요한 데이터 추출

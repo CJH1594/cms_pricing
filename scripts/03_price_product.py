@@ -12,6 +12,7 @@
 import os
 import sys
 import numpy as np
+import json # Import json for specific exception handling
 
 # PYTHONPATH 설정
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -19,6 +20,10 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 from cms_pricing.src.market import bootstrap_if_needed, create_continuous_zero_curve
 from cms_pricing.src.models import make_lnP_spline, phi_g2pp_factory, calculate_V, load_calibrated_params, calculate_forward_swap_rate
 from cms_pricing.src.pricing import price_digital_cms_spread, save_pricing_results
+from cms_pricing.config.settings import (
+    PRODUCT_DEFINITION,
+    NUM_PATHS,
+)
 
 
 def main() -> None:
@@ -29,21 +34,14 @@ def main() -> None:
     # 2. 파라미터 로드
     try:
         params = load_calibrated_params()
-    except FileNotFoundError as e:
+    except (FileNotFoundError, json.JSONDecodeError) as e: # Catch json.JSONDecodeError
         raise RuntimeError("보정된 파라미터 파일이 없습니다. 먼저 02_calibrate_g2pp.py를 실행하세요.") from e
     # 3. φ(t)와 f(0,t) 함수 생성
     phi_func, f0_func = phi_g2pp_factory(P_year, params['a'], params['b'], params['sigma'], params['eta'], params['rho'])
     # V_0(t) 함수 생성
     V_0_func = lambda t: calculate_V(0.0, t, params)
     # 4. 상품 정의
-    product = {
-        'expiry': 1.0,
-        'tenor_long': 10.0,
-        'tenor_short': 2.0,
-        'strike': 0.0055,
-        'coupon': 1.0,
-        'notional': 1.0,
-    }
+    product = PRODUCT_DEFINITION # Use PRODUCT_DEFINITION from settings
     print("상품 스펙:")
     print(f"  만기: {product['expiry']}년")
     print(f"  CMS: {product['tenor_long']:.0f}Y - {product['tenor_short']:.0f}Y")
@@ -58,7 +56,7 @@ def main() -> None:
         P_market,
         V_0_func,
         phi_func,
-        num_paths=50000,
+        num_paths=NUM_PATHS, # Use NUM_PATHS from settings
     )
     print("\n가격 결과:")
     print(f"  현재가치: {price:.2f}")

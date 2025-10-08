@@ -51,7 +51,11 @@ except ImportError:
 def to_years(label: str) -> float:
     """만기나 텐서 라벨을 연 단위로 변환합니다.
 
-    ``"6M" → 0.5``, ``"1Y" → 1.0``과 같이 숫자를 반환합니다.
+    예시:
+
+        "6M" -> 0.5
+        "1Y" -> 1.0
+
     라벨이 잘못된 경우 ValueError를 발생시킵니다.
     """
     label = label.strip().upper()
@@ -298,7 +302,10 @@ def load_vol_surface(filename: str = VOLATILITY_SURFACE_FILE) -> pd.DataFrame:
     if not os.path.exists(path):
         raise FileNotFoundError(f"변동성 표면 파일을 찾을 수 없습니다: {path}")
     with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"변동성 표면 파일이 손상되었습니다: {path}") from e
     index = [str(x) for x in data["index"]]
     columns = [str(x) for x in data["columns"]]
     values = np.array(data["values"], dtype=float)

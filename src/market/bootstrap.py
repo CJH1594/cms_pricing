@@ -131,7 +131,12 @@ def create_continuous_zero_curve(P_year: Dict[int, float]):
     """
     maturities = np.array([0] + sorted(P_year.keys()), dtype=float)
     dfs = np.array([1.0] + [P_year[t] for t in sorted(P_year.keys())], dtype=float)
-    zero_rates = -np.log(dfs) / (maturities + 1e-9)
+
+    # t=0에서의 제로 레이트 계산을 피하고, 이후에 첫 번째 양수 값으로 채워넣음
+    zero_rates = np.zeros_like(maturities)
+    nonzero_maturities_idx = maturities > 0
+    zero_rates[nonzero_maturities_idx] = -np.log(dfs[nonzero_maturities_idx]) / maturities[nonzero_maturities_idx]
+    
     # t=0에서는 첫 번째 양수 값으로 채워넣음
     zero_rates[0] = zero_rates[1]
     spline = CubicSpline(maturities, zero_rates, bc_type="natural")
@@ -204,8 +209,8 @@ def bootstrap_if_needed(par_rates_pct: Dict[int, float] = None,
         if not force:
             par_full, P_year = load_market_data(filename)
             return par_full, P_year
-    except FileNotFoundError:
-        # 파일이 없으면 새로 계산
+    except (FileNotFoundError, json.JSONDecodeError):
+        # 파일이 없거나 유효하지 않으면 새로 계산
         pass
     # Cubic Spline을 이용해 연간 Par 금리 보간
     par_full = fill_annual_par_curve_cubic(par_rates_pct)

@@ -54,3 +54,28 @@ TENOR_LONG_DISCOUNT = -0.03
 
 ## 앵커 포인트 예시
 ANCHOR_POINTS = {}
+
+## 타겟 날짜 설정 (YYYY-MM-DD 형식)
+TARGET_DATE_STR = "2025-10-08"
+
+## 상품 정의
+PRODUCT_DEFINITION = {
+    'expiry': 1.0,
+    'tenor_long': 10.0,
+    'tenor_short': 2.0,
+    'strike': 0.0055,
+    'coupon': 1.0,
+    'notional': 1.0,
+}
+
+## 몬테카를로 시뮬레이션 경로 수
+NUM_PATHS = 50000
+
+## 몬테카를로 시뮬레이션 스텝 수 (연간)
+SIMULATION_NUM_STEPS_PER_YEAR = 252
+
+## 가격 결정 결과 파일 이름
+PRICING_RESULTS_FILE = "pricing_results.json"
+
+## 리스크 분석 쇼크 값
+RISK_SHOCK_AMOUNT = 0.0001 # 1bp

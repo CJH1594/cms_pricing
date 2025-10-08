@@ -3,6 +3,9 @@
 import numpy as np
 from cms_pricing.src.models.analytic import AnalyticModel
 from cms_pricing.src.pricing.utils import load_pricing_results
+from cms_pricing.config.settings import (
+    RISK_SHOCK_AMOUNT,
+)
 
 def run_risk_analysis(model: AnalyticModel, model_name: str) -> None:
     """
@@ -15,7 +18,7 @@ def run_risk_analysis(model: AnalyticModel, model_name: str) -> None:
         pricing_results = load_pricing_results()
         prod = pricing_results["product"]
         note_value = pricing_results["price"]
-    except (FileNotFoundError, RuntimeError) as e:
+    except (FileNotFoundError, RuntimeError, ValueError) as e: # Add ValueError here
         raise RuntimeError("가격 계산 결과 파일(pricing_results.json)이 없습니다. 03_price_product.py를 먼저 실행하세요.") from e
 
     # 2. 내재 변동성 계산
@@ -46,7 +49,7 @@ def run_risk_analysis(model: AnalyticModel, model_name: str) -> None:
     print(f"  감마: {gamma_underlying:.4f}")
 
     # 5. 쇼크 시뮬레이션
-    shock = 0.0001  # 1bp
+    shock = RISK_SHOCK_AMOUNT # Use RISK_SHOCK_AMOUNT from settings
     S_new_spread = S + shock # 스프레드에 직접 쇼크
 
     price_change_approx = delta_underlying * shock + 0.5 * gamma_underlying * shock**2

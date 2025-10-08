@@ -11,6 +11,7 @@
 
 import os
 import sys
+import numpy as np # Import numpy at the top
 from pprint import pprint
 
 # 프로젝트 루트 경로를 PYTHONPATH에 추가하여 cms_pricing 패키지를 찾을 수 있도록 함
@@ -40,5 +41,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    import numpy as np  # pylint: disable=import-self
     main()

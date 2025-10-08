@@ -22,16 +22,18 @@ from cms_pricing.src.models.calibration import (
     black_swaption_price,
 )
 from cms_pricing.src.models import load_calibrated_params
-from cms_pricing.config.settings import EXPIRY_LABELS, TENORS
+from cms_pricing.config.settings import EXPIRY_LABELS, TENORS, DATA_DIR, VOLATILITY_SURFACE_FILE # Import DATA_DIR and VOLATILITY_SURFACE_FILE
 
 def main() -> None:
+    """G2++와 Black, Bachelier 모델의 적합도를 비교하여 금리 모델을 평가합니다."""
     # 1. 시장 데이터와 할인곡선 로드
     par_full, P_year = bootstrap_if_needed()
     zero_curve = create_continuous_zero_curve(P_year)
     P_market = lambda t: np.exp(-zero_curve(t) * t)
 
     # 2. 변동성 표면 로드 (리스케일된 vol을 % 단위로 환산)
-    with open('cms_pricing/data/volatility_surface.json') as f:
+    volatility_surface_path = os.path.join(DATA_DIR, VOLATILITY_SURFACE_FILE)
+    with open(volatility_surface_path) as f:
         surf = json.load(f)
     vol_rescaled = pd.DataFrame(surf['values'], index=surf['index'], columns=surf['columns'])
     surface_pct = vol_rescaled.values * 100.0

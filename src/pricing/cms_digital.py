@@ -15,11 +15,14 @@ from scipy.stats import norm
 
 from ..models.g2pp import calculate_forward_swap_rate
 from ..pricing.simulation import simulate_paths
+from ...config.settings import (
+    SIMULATION_NUM_STEPS_PER_YEAR,
+)
 
 
-def _phi(x: float) -> float:
-    """표준 정규 분포의 확률 밀도 함수(PDF)를 계산합니다."""
-    return float(norm.pdf(x))
+# def _phi(x: float) -> float:
+#     """표준 정규 분포의 확률 밀도 함수(PDF)를 계산합니다."""
+#     return float(norm.pdf(x))
 
 def calculate_digital_bond_price(S0: float, K: float, T0: float, sigma: float) -> float:
     """블랙-숄즈 모델 기반의 디지털 채권 (현금 또는 무/유 상환) 가격을 계산합니다.
@@ -46,7 +49,7 @@ def price_digital_cms_spread(params: Dict[str, float],
     """
     T_expiry, tenor_long, tenor_short, strike, coupon, notional = product_details
     # 시뮬레이션 스텝 수는 영업일 기준 약 252일을 가정
-    num_steps = max(int(T_expiry * 252), 100)
+    num_steps = max(int(T_expiry * SIMULATION_NUM_STEPS_PER_YEAR), 100) # Use SIMULATION_NUM_STEPS_PER_YEAR
     # 경로 생성
     x_T, y_T, D_paths = simulate_paths(params, T_expiry, num_paths, num_steps, phi_func)
     # 할인계수 검증: E[D_T] ≈ P(0,T)
@@ -86,7 +89,7 @@ def calculate_digital_bond_delta(S0: float, K: float, T0: float, sigma: float) -
     Ref: Theorem 4. Delt-B Formula
     """
     d1 = (np.log(S0 / K) + 0.5 * sigma**2 * T0) / (sigma * np.sqrt(T0))
-    delt_B = _phi(d1) / (K * sigma * np.sqrt(T0))
+    delt_B = norm.pdf(d1) / (K * sigma * np.sqrt(T0)) # Use norm.pdf directly
     return float(delt_B)
 
 def calculate_digital_bond_vega(S: float, K: float, T: float, sigma: float) -> float:
@@ -117,8 +120,8 @@ def calculate_digital_bond_vega(S: float, K: float, T: float, sigma: float) -> f
     phi_d2 = norm.pdf(d2)
     
     # Vega = -σ/d1 * φ(d2)
-    if abs(d1) < 1e-10:
-        # d1이 0에 가까우면 수치적 불안정
+    # d1이 0에 가까워지면 수치적으로 불안정해지므로 d1이 매우 작은 경우 0을 반환
+    if abs(d1) < 1e-6:  # 1e-10에서 1e-6으로 변경하여 더 보수적으로 처리
         return 0.0
     
     vega = -(sigma / d1) * phi_d2

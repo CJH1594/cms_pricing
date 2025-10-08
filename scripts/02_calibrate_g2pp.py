@@ -14,6 +14,7 @@ import sys
 import datetime as _dt
 import numpy as np
 import pandas as pd
+import json # Import json for specific exception handling
 
 # PYTHONPATH 설정
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -24,6 +25,7 @@ from cms_pricing.src.models import calibrate_g2pp
 from cms_pricing.config.settings import (
     EXPIRY_LABELS,
     TENORS,
+    TARGET_DATE_STR, # Add TARGET_DATE_STR to imports
 )
 
 
@@ -40,8 +42,8 @@ def main() -> None:
     P_market = lambda t: np.exp(-zero_curve(t) * t)
 
     # 2. 과거 ATM 변동성 표면 정의 (2018-04-16, Black %)
-    expiries = ["1M", "3M", "6M", "1Y", "2Y"]
-    tenors = ["1Y", "2Y", "5Y", "10Y", "15Y", "20Y", "30Y"]
+    # expiries = ["1M", "3M", "6M", "1Y", "2Y"]
+    # tenors = ["1Y", "2Y", "5Y", "10Y", "15Y", "20Y", "30Y"]
     data_2018_04_16_pct = [
         [12.4559, 15.6906, 18.5884, 18.7795, 18.0630, 17.7101, 17.5578],
         [14.1064, 17.1848, 19.5244, 19.6338, 18.9183, 18.5667, 18.4021],
@@ -49,11 +51,11 @@ def main() -> None:
         [17.7833, 20.1802, 22.1637, 21.9932, 21.0658, 20.5908, 20.3785],
         [22.1572, 23.2539, 23.9005, 23.0334, 21.9114, 21.2860, 21.0047],
     ]
-    vol_old = pd.DataFrame(np.array(data_2018_04_16_pct) / 100.0, index=expiries, columns=tenors)
+    vol_old = pd.DataFrame(np.array(data_2018_04_16_pct) / 100.0, index=EXPIRY_LABELS, columns=TENORS)
 
     # 3. 날짜 설정
     old_date_str = "2018-04-16"
-    target_date_str = _dt.date.today().isoformat()
+    target_date_str = TARGET_DATE_STR # Use TARGET_DATE_STR from settings
 
     # 4. MOVE 지수로 리스케일링
     vol_rescaled = rescale_vol_surface(vol_old, old_date_str=old_date_str, target_date_str=target_date_str)
@@ -66,7 +68,7 @@ def main() -> None:
         from cms_pricing.src.models import load_calibrated_params
         params = load_calibrated_params()
         print("✓ 저장된 파라미터를 로드했습니다. 보정을 건너뜁니다.")
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError):
         # 보정 수행: surface_pct는 % 단위 변동성
         surface_pct = (vol_rescaled * 100.0).values.tolist()
         params = calibrate_g2pp(surface_pct, expiry_labels=EXPIRY_LABELS, tenors=TENORS, P_market=P_market)

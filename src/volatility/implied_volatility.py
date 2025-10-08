@@ -5,22 +5,11 @@ import numpy as np
 from scipy.optimize import brentq
 from scipy.stats import norm
 
+from ..models.analytic import GBMModel, BachelierModel # Import the models
 
-def calculate_digital_bond_price_gbm(S: float, K: float, T: float, vol: float) -> float:
-    """GBM (Black-Scholes) 모델을 사용한 디지털 채권 가격 계산."""
-    if vol <= 0 or T <= 0:
-        return 1.0 if S > K else 0.0
-    d2 = (np.log(S / K) - 0.5 * vol**2 * T) / (vol * np.sqrt(T))
-    return norm.cdf(d2)
-
-
-def calculate_digital_bond_price_bachelier(S: float, K: float, T: float, vol: float) -> float:
-    """Bachelier (Normal) 모델을 사용한 디지털 채권 가격 계산."""
-    if vol <= 0 or T <= 0:
-        return 1.0 if S > K else 0.0
-    d = (S - K) / (vol * np.sqrt(T))
-    return norm.cdf(d)
-
+# Create model instances
+gbm_model_instance = GBMModel()
+bachelier_model_instance = BachelierModel()
 
 def calculate_implied_volatility_small_root_gbm(S: float, K: float, T: float,
                                                 target_price: float) -> tuple[float, bool]:
@@ -35,7 +24,7 @@ def calculate_implied_volatility_small_root_gbm(S: float, K: float, T: float,
     if S <= 0 or K <= 0 or T <= 0:
         return 0.0, False
 
-    model_price = lambda vol: calculate_digital_bond_price_gbm(S, K, T, vol)
+    model_price = lambda vol: gbm_model_instance.price_digital(S, K, T, vol)
     objective = lambda vol: target_price - model_price(vol)
 
     if S == K:
@@ -73,7 +62,7 @@ def calculate_implied_volatility_small_root_bachelier(S: float, K: float, T: flo
     if S == K:
         return (0.005, True) if np.isclose(target_price, 0.5) else (0.0, False)
 
-    model_price = lambda vol: calculate_digital_bond_price_bachelier(S, K, T, vol)
+    model_price = lambda vol: bachelier_model_instance.price_digital(S, K, T, vol)
     objective = lambda vol: target_price - model_price(vol)
 
     # Bachelier 모델은 단조 함수이므로 넓은 구간에서 탐색
@@ -103,7 +92,8 @@ def calculate_implied_volatility(pricing_result: dict, use_bachelier: bool = Tru
     note_value = pricing_result['price']
 
     if abs(coupon) < 1e-12 or abs(notional) < 1e-12 or T <= 0:
-        return 0.15 # Default vol
+        # return 0.15 # Default vol
+        return 0.0 # Return 0.0 and let the converged flag handle it
 
     target_price = float(np.clip(note_value / (notional * coupon), 1e-9, 1.0 - 1e-9))
     
@@ -137,9 +127,9 @@ def test_implied_volatility():
         print(f"  입력: S={S*1e4:.1f}bp, K={K*1e4:.1f}bp, T={T}, 실제 변동성={vol}")
         
         if is_bachelier:
-            known_price = calculate_digital_bond_price_bachelier(S, K, T, vol)
+            known_price = bachelier_model_instance.price_digital(S, K, T, vol) # Use model instance
         else:
-            known_price = calculate_digital_bond_price_gbm(S, K, T, vol)
+            known_price = gbm_model_instance.price_digital(S, K, T, vol) # Use model instance
 
         pricing_result = {
             'product': {

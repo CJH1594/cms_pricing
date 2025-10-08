@@ -41,8 +41,8 @@ class GBMModel(AnalyticModel):
     def delta_digital(self, S: float, K: float, T: float, vol: float) -> float:
         if vol <= 1e-9 or T <= 0 or S <= 0 or K <= 0:
             return 0.0
-        d1 = (np.log(S / K) + 0.5 * vol**2 * T) / (vol * np.sqrt(T))
-        return norm.pdf(d1) / (S * vol * np.sqrt(T))
+        d2 = (np.log(S / K) - 0.5 * vol**2 * T) / (vol * np.sqrt(T)) # Use d2 here
+        return norm.pdf(d2) / (S * vol * np.sqrt(T))
         
     def gamma_digital(self, S: float, K: float, T: float, vol: float) -> float:
         if vol <= 1e-9 or T <= 0 or S <= 0 or K <= 0:

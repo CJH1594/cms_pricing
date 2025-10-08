@@ -74,9 +74,29 @@ def phi_g2pp_factory(P_year: Dict[int, float],
             t = 1e-9
         ea = exp(-a * t)
         eb = exp(-b * t)
-        term_x = (sigma ** 2) / (2.0 * a ** 2) * (1.0 - ea) ** 2
-        term_y = (eta ** 2) / (2.0 * b ** 2) * (1.0 - eb) ** 2
-        cross = (rho * sigma * eta) / (a * b) * (1.0 - ea) * (1.0 - eb)
+        
+        # term_x calculation
+        if abs(a) < 1e-9:
+            term_x = 0.5 * (sigma * t)**2
+        else:
+            term_x = (sigma ** 2) / (2.0 * a ** 2) * (1.0 - ea) ** 2
+
+        # term_y calculation
+        if abs(b) < 1e-9:
+            term_y = 0.5 * (eta * t)**2
+        else:
+            term_y = (eta ** 2) / (2.0 * b ** 2) * (1.0 - eb) ** 2
+
+        # cross term calculation
+        if abs(a) < 1e-9 and abs(b) < 1e-9:
+            cross = rho * sigma * eta * t**2
+        elif abs(a) < 1e-9:
+            cross = (rho * sigma * eta / b) * t * (1.0 - eb) # Corrected to use 't'
+        elif abs(b) < 1e-9:
+            cross = (rho * sigma * eta / a) * (1.0 - ea) * t # Corrected to use 't'
+        else:
+            cross = (rho * sigma * eta) / (a * b) * (1.0 - ea) * (1.0 - eb)
+
         return f0(t) + term_x + term_y + cross
 
     return phi, f0
@@ -99,18 +119,28 @@ def _calculate_V_cached(t: float, T: float,
     if abs(a) < 1e-12 or abs(b) < 1e-12:
         return 0.0
 
-    # 아래 수식은 기존 프로젝트의 V(t,T) 구현을 그대로 사용합니다.
-    term1 = (sigma ** 2 / a ** 2) * (
-        T_m_t + (2 / a) * np.exp(-a * T_m_t) - (1 / (2 * a)) * np.exp(-2 * a * T_m_t) - 3 / (2 * a)
-    )
-    term2 = (eta ** 2 / b ** 2) * (
-        T_m_t + (2 / b) * np.exp(-b * T_m_t) - (1 / (2 * b)) * np.exp(-2 * b * T_m_t) - 3 / (2 * b)
-    )
-    term3 = (2 * rho * sigma * eta / (a * b)) * (
-        T_m_t + (np.exp(-a * T_m_t) - 1) / a
-        + (np.exp(-b * T_m_t) - 1) / b
-        - (np.exp(-(a + b) * T_m_t) - 1) / (a + b)
-    )
+    # term1 calculation
+    if abs(a) < 1e-9:
+        term1 = (sigma**2 / 2) * T_m_t**2
+    else:
+        term1 = (sigma**2 / a**2) * (T_m_t + (2 / a) * np.exp(-a * T_m_t) - (1 / (2 * a)) * np.exp(-2 * a * T_m_t) - 3 / (2 * a))
+
+    # term2 calculation
+    if abs(b) < 1e-9:
+        term2 = (eta**2 / 2) * T_m_t**2
+    else:
+        term2 = (eta**2 / b**2) * (T_m_t + (2 / b) * np.exp(-b * T_m_t) - (1 / (2 * b)) * np.exp(-2 * b * T_m_t) - 3 / (2 * b))
+    
+    # term3 calculation
+    if abs(a) < 1e-9 and abs(b) < 1e-9:
+        term3 = rho * sigma * eta * T_m_t**2
+    elif abs(a) < 1e-9:
+        term3 = (2 * rho * sigma * eta / b) * (T_m_t + (np.exp(-b * T_m_t) - 1) / b - (np.exp(-b * T_m_t) - 1) / b)
+    elif abs(b) < 1e-9:
+        term3 = (2 * rho * sigma * eta / a) * (T_m_t + (np.exp(-a * T_m_t) - 1) / a - (np.exp(-a * T_m_t) - 1) / a)
+    else:
+        term3 = (2 * rho * sigma * eta / (a * b)) * (T_m_t + (np.exp(-a * T_m_t) - 1) / a + (np.exp(-b * T_m_t) - 1) / b - (np.exp(-(a + b) * T_m_t) - 1) / (a + b))
+
     return float(term1 + term2 + term3)
 
 
