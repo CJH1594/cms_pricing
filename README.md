@@ -1,29 +1,13 @@
 # CMS Pricing 프로젝트
+본 프로젝트는 다음 페이지에 이론적 기반을 둡니다: https://www.notion.so/CMS-284b75d0f444809e8740e1d929960859?source=copy_link
 
-본 프로젝트는 CMS(Contingent Money Swap) 스프레드 노트의
-시장 데이터를 분석하고, 금리모형(G2++)을 보정하여 상품 가격을 산출하는
-파이썬 모듈 모음입니다. 코드는 다음과 같은 원칙을 따릅니다.
+본 프로젝트는 CMS(Contingent Money Swap) 스프레드 노트와 그 가중합으로 해석되는 CMS SPREAD STEP-UP 노트의
+시장 데이터를 분석하고, 금리모형(G2++)을 보정하여 상품 가격을 산출하는 파이썬 모듈 모음입니다. 코드는 다음과 같은 원칙을 따릅니다.
 
-1. **재현 가능성**: 파라미터 추정과 부트스트래핑 결과는 JSON 파일로 저장하여
-   반복 실행 시 동일한 결과를 재사용합니다. 계산에 시간이 오래 걸리는
-   보정 단계는 필요할 때만 수행하고, 기존 결과가 존재하면 로드합니다.
-2. **가독성**: 모든 함수와 클래스에는 한글 주석과 명확한 docstring을
-   제공하여 금리 모델링을 처음 접하는 사용자도 이해하기 쉽도록 구성했습니다.
-3. **모듈화**: 시장 데이터 부트스트래핑(`src/market`), 변동성 리스케일링
-   (`src/volatility`), 모델 및 파라미터 보정(`src/models`), 상품 가격 결정
-   (`src/pricing`) 등 기능별로 모듈을 분리했습니다. 공통 함수는 중복
-   정의하지 않고 재사용합니다.
-4. **확장성**: 필요에 따라 새로운 모델이나 상품을 추가할 수 있도록
-   디렉터리 구조를 설계했습니다. 위험 분석이나 헷징과 관련된 모듈은
-   `src/risk`에 위치합니다.
-
-프로젝트를 처음 실행할 때는 `scripts/setup_directories.py`를 이용하여
-필요한 데이터 디렉터리를 생성하세요. 개별 단계 실행을 위해서는
-`scripts/01_bootstrap_curve.py`, `scripts/02_calibrate_g2pp.py`,
-`scripts/03_price_product.py` 스크립트를 차례로 실행하면 됩니다.
+프로젝트를 처음 실행할 때는 `scripts/setup_directories.py`를 이용하여 필요한 데이터 디렉터리를 생성하세요. 개별 단계 실행을 위해서는
+`scripts/01_bootstrap_curve.py`, `scripts/02_calibrate_g2pp.py`, ... 스크립트를 차례로 실행하면 됩니다.
 
 ## 기준 파라미터 재현 (Benchmark Parameter Reproduction)
-
 이 프로젝트의 초기 벤치마크 G2++ 파라미터는 아래에 명시된 특정 변동성 곡면(Volatility Surface)을 사용하여 보정(calibration)되었습니다.
 
 현재 메인 스크립트(`scripts/02_calibrate_g2pp.py`)는 과거 데이터를 **MOVE 지수를 이용해 동적으로 리스케일링**하므로, 실행할 때마다 다른 변동성 곡면을 생성합니다. 따라서, 초기 벤치마크 결과를 정확히 재현해야 할 경우, 아래의 고정된 변동성 곡면 데이터를 모델의 입력값으로 직접 사용해야 합니다.
@@ -86,5 +70,3 @@
     "elapsed_time_sec": 174.90578532218933,
     "status": "Maximum number of iterations has been exceeded."
 }
-
-본 프로젝트는 다음 페이지에 이론적 기반을 둡니다: https://www.notion.so/CMS-284b75d0f444809e8740e1d929960859?source=copy_link
