@@ -1,0 +1,11 @@
+{
+    "a": 0.02474937324354551,
+    "b": 0.46165033112639653,
+    "sigma": 0.010600099854823044,
+    "eta": 0.023270524495971525,
+    "rho": 0.6240607532436443,
+    "final_error": 0.0009884010269825658,
+    "iterations": 50,
+    "elapsed_time_sec": 174.90578532218933,
+    "status": "Maximum number of iterations has been exceeded."
+}

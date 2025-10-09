@@ -180,17 +180,6 @@ $RECYCLE.BIN/
 .kaggle/
 docker-compose.override.yml
 
-########################################
-# Data / artifacts (대용량은 버전관리 제외)
-# 필요시 예시처럼 whitelist 폴더만 허용
-########################################
-data/**
-!data/.gitkeep
-!data/README.md
-# 샘플/스키마만 허용하려면 아래 사용
-#!data/samples/**
-#!data/schema/**
-
 # 모델/결과물 아카이브(필요 시 LFS 고려)
 models/**
 !models/.gitkeep
