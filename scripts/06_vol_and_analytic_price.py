@@ -52,7 +52,7 @@ def main() -> None:
 
     print(f"만기 시점 스프레드 표준편차 (json에서 로드): {std_dev_of_spreads*1e4:.2f} bp")
     print(f"만기 (T): {T} 년")
-    print(f"계산된 내재 바셸리에 변동성 (σ_implied): {implied_bachelier_vol:.6f}")
+    print(f"이를 이용해 계산한 바셸리에 변동성 (σ_implied): {implied_bachelier_vol:.6f}")
 
     # --- 3. 바셸리에 모델로 분석적 이론가 계산 ---
     print("\n--- 3. 바셸리에 분석 모델로 이론가 계산 ---")
